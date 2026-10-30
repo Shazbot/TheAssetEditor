@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Buffers.Binary;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -80,7 +80,7 @@ namespace Editors.PackOptimizer.Core
         // distribution instead of inheriting a global battle weight.
         private static readonly int[] DefaultNormalBattleLods = [0, 1, 2, 3];
 
-        public static Wh3ArmyVisualScenario Default { get; } = new(
+        private static readonly Wh3ArmyVisualScenario DefaultBase = new(
             0.75,
             0.50,
             Wh3EntityRoundingPolicy.Ceiling,
@@ -99,11 +99,22 @@ namespace Editors.PackOptimizer.Core
             Wh3RosterScope.AllGameUnits,
             null);
 
+        /// <summary>
+        /// Bench-only override of the default LOD distribution (LOD index -> weight, normalized on use).
+        /// Null keeps the production equal-weight distribution. Not part of the host request surface.
+        /// </summary>
+        internal static IReadOnlyDictionary<int, double>? LodDistributionOverride { get; set; }
+
+        public static Wh3ArmyVisualScenario Default
+            => LodDistributionOverride is { } lodOverride
+                ? DefaultBase with { LodDistribution = NormalizeLodDistribution(lodOverride) }
+                : DefaultBase;
+
         // The resolver default remains all-game for callers that need a stable, game-wide
         // denominator. Atlas planning is pack-scoped by default because a selected mod pack
         // should not be charged for units whose visuals cannot be affected by that pack.
-        public static Wh3ArmyVisualScenario PackAffected { get; } =
-            Default with { RosterScope = Wh3RosterScope.ModAffectedUnits };
+        public static Wh3ArmyVisualScenario PackAffected
+            => Default with { RosterScope = Wh3RosterScope.ModAffectedUnits };
 
         private static IReadOnlyDictionary<int, double> CreateDefaultLodDistribution()
             => NormalizeLodDistribution(

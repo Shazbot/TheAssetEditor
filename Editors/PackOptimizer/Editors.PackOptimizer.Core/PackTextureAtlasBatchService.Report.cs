@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -26,6 +26,85 @@ namespace Editors.PackOptimizer.Core
 {
     public sealed partial class PackTextureAtlasBatchService
     {
+        // Report-only: split of the marginal expected draws saved by scenario LOD for the
+        // selected and rejected payloads, plus one machine-readable line per evaluated payload
+        // so a different LOD weighting can be re-scored offline.
+        private static List<string> BuildCrossRigidLodSplitLines(
+            IReadOnlyCollection<CrossRigidPayloadSelectionEntry> selectionEntries,
+            IReadOnlyCollection<CrossRigidGeneratedPayloadAnalysisEntry> analysisEntries)
+        {
+            var lines = new List<string>();
+            var payloadsById = analysisEntries
+                .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            const int lodCount = 4;
+            (double[] Saved, double[] Share, double Marginal) Split(
+                CrossRigidPayloadSelectionEntry entry)
+            {
+                var saved = new double[lodCount];
+                var weighted = new double[lodCount];
+                if (payloadsById.TryGetValue(entry.GeneratedPayloadId, out var payload))
+                {
+                    foreach (var lod in payload.Lods)
+                    {
+                        var index = Math.Clamp(lod.ScenarioLodIndex, 0, lodCount - 1);
+                        saved[index] += lod.DrawsSaved;
+                        weighted[index] += lod.DrawsSaved * lod.LodProbability;
+                    }
+                }
+
+                var total = weighted.Sum();
+                var share = weighted
+                    .Select(value => total > 0 ? value / total : 0)
+                    .ToArray();
+                return (saved, share, entry.MarginalExpectedArmyDrawCallsEliminated);
+            }
+
+            foreach (var (label, accepted) in new[] { ("selected", true), ("rejected/conflict-losing", false) })
+            {
+                var group = selectionEntries.Where(entry => entry.Accepted == accepted).ToArray();
+                var perLod = new double[lodCount];
+                var onlyHigh23 = 0;
+                var onlyHigh123 = 0;
+                var noLodData = 0;
+                foreach (var entry in group)
+                {
+                    var (saved, share, marginal) = Split(entry);
+                    for (var lod = 0; lod < lodCount; lod++)
+                        perLod[lod] += marginal * share[lod];
+                    if (saved.Sum() <= 0)
+                    {
+                        noLodData++;
+                        continue;
+                    }
+
+                    if (saved[0] <= 0 && saved[1] <= 0)
+                        onlyHigh23++;
+                    if (saved[0] <= 0)
+                        onlyHigh123++;
+                }
+
+                lines.Add(
+                    $"Cross-rigid LOD split ({label}, {group.Length:N0} payload(s)): " +
+                    $"expected draws by LOD0={perLod[0]:0.###}, LOD1={perLod[1]:0.###}, " +
+                    $"LOD2={perLod[2]:0.###}, LOD3={perLod[3]:0.###}; " +
+                    $"payloads saving only at LOD2/3={onlyHigh23:N0}; " +
+                    $"only at LOD1-3 (none at LOD0)={onlyHigh123:N0}; no LOD data={noLodData:N0}");
+            }
+
+            foreach (var entry in selectionEntries.OrderBy(item => item.GeneratedPayloadId, StringComparer.Ordinal))
+            {
+                var (saved, _, marginal) = Split(entry);
+                lines.Add(
+                    $"LODW payload={entry.GeneratedPayloadId} accepted={(entry.Accepted ? 1 : 0)} " +
+                    $"decision={entry.Decision} bytes={entry.GeneratedGeometryBytes} " +
+                    $"marginal={marginal.ToString("0.#####", CultureInfo.InvariantCulture)} " +
+                    $"saved={string.Join(",", saved.Select(value => value.ToString("0", CultureInfo.InvariantCulture)))}");
+            }
+
+            return lines;
+        }
+
         // Report-only: selected payloads by ascending physical bytes per marginal
         // expected draw, with the cumulative bytes/draws curve and percentile summary.
         private static List<string> BuildCrossRigidPayloadCostTableLines(
@@ -1887,6 +1966,13 @@ namespace Editors.PackOptimizer.Core
 
                 foreach (var line in BuildCrossRigidPayloadCostTableLines(
                              selectedPayloads))
+                {
+                    sb.AppendLine(line);
+                }
+
+                foreach (var line in BuildCrossRigidLodSplitLines(
+                             state.CrossRigidPayloadSelectionEntries,
+                             state.CrossRigidGeneratedPayloadAnalysisEntries))
                 {
                     sb.AppendLine(line);
                 }

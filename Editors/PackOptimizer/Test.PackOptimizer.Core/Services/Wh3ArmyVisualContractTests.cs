@@ -1,4 +1,5 @@
-using System.IO;
+﻿using System.IO;
+using Editors.PackOptimizer.Core;
 using System.Reflection;
 using System.Text.Json;
 
@@ -220,6 +221,28 @@ namespace Test.PackOptimizer.Core
             Assert.That(
                 scenarioType.GetProperty("RosterScope")?.GetValue(scenario)?.ToString(),
                 Is.EqualTo("ModAffectedUnits"));
+        }
+
+        [Test]
+        public void AtlasScenario_LodDistributionOverrideIsUnsetByDefaultAndApplies()
+        {
+            Assert.That(Wh3ArmyVisualScenario.LodDistributionOverride, Is.Null);
+            try
+            {
+                Wh3ArmyVisualScenario.LodDistributionOverride =
+                    new Dictionary<int, double> { [0] = 1, [1] = 1, [2] = 2, [3] = 4 };
+                var overridden = Wh3ArmyVisualScenario.Default.LodDistribution;
+                Assert.That(overridden[3], Is.EqualTo(0.5).Within(1e-9));
+                Assert.That(
+                    Wh3ArmyVisualScenario.PackAffected.LodDistribution[0],
+                    Is.EqualTo(0.125).Within(1e-9));
+            }
+            finally
+            {
+                Wh3ArmyVisualScenario.LodDistributionOverride = null;
+            }
+
+            Assert.That(Wh3ArmyVisualScenario.Default.LodDistribution[3], Is.EqualTo(0.25).Within(1e-9));
         }
 
         [Test]

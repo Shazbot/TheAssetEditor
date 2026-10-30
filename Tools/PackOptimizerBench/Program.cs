@@ -18,7 +18,7 @@ using Shared.Core.Settings;
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked,0.08:free] [--army-scope culture|subculture] [--sibling-scope model|pack]
-//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N]
+//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--lod-weights w0,w1,w2,w3]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -182,6 +182,18 @@ internal static class Program
         };
         if (CrossRigidBudgetSettings.Current != xrDefaults)
             Console.WriteLine($"Cross-rigid budget override: {CrossRigidBudgetSettings.Current}");
+
+        // Bench-only override of the scenario LOD distribution (LOD0..LOD3, normalized).
+        if (options.TryGetValue("lod-weights", out var lodWeightsText))
+        {
+            var lodWeights = lodWeightsText
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(text => double.Parse(text, CultureInfo.InvariantCulture))
+                .ToArray();
+            Wh3ArmyVisualScenario.LodDistributionOverride = Enumerable.Range(0, lodWeights.Length)
+                .ToDictionary(index => index, index => lodWeights[index]);
+            Console.WriteLine($"Scenario LOD distribution override: {lodWeightsText}");
+        }
 
         var request = new PackOptimizerRequest(
             source,
