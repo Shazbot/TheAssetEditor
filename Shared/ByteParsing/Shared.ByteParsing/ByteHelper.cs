@@ -93,9 +93,16 @@ namespace Shared.ByteParsing
             return Marshal.SizeOf(type);
         }
 
+        // Keep Marshal.SizeOf failures inside Lazy.Value so callers receive the original exception.
+        private static class MarshaledSize<T>
+        {
+            internal static readonly Lazy<int> Size =
+                new(() => Marshal.SizeOf(typeof(T)));
+        }
+
         public static int GetSize<T>()
         {
-            return Marshal.SizeOf(typeof(T));
+            return MarshaledSize<T>.Size.Value;
         }
 
         public static uint GetPropertyTypeSize<T>(T property)

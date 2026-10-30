@@ -674,6 +674,106 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
+        private static bool TryDecodeDdsMipChain(
+            byte[] dds,
+            DdsLayout layout,
+            out (byte[] Bgra, int Width, int Height)[] levels,
+            out string error)
+        {
+            levels = [];
+            error = string.Empty;
+            try
+            {
+                if (dds.LongLength < layout.HeaderSize + layout.ChainBytes)
+                    throw new InvalidDataException("source is shorter than its header declares");
+
+                // Pfim exposes the input array through this MemoryStream overload, avoiding a
+                // second copy of the compressed chain while it decodes every mip.
+                using var stream = new MemoryStream(dds, 0, dds.Length, writable: false, publiclyVisible: true);
+                using var image = Pfim.Pfimage.FromStream(stream, PooledPfimAllocator.Config);
+                var channels = image.Format switch
+                {
+                    Pfim.ImageFormat.Rgba32 => 4,
+                    Pfim.ImageFormat.Rgb24 => 3,
+                    _ => 0,
+                };
+                if (channels == 0)
+                {
+                    error = $"decoded pixel format {image.Format} is not supported";
+                    return false;
+                }
+
+                if (image.MipMaps.Length < layout.MipCount - 1)
+                    throw new InvalidDataException("decoded mip chain has fewer levels than the DDS header declares");
+
+                levels = new (byte[] Bgra, int Width, int Height)[layout.MipCount];
+                var data = image.Data;
+                for (var level = 0; level < layout.MipCount; level++)
+                {
+                    int width;
+                    int height;
+                    int stride;
+                    int dataOffset;
+                    if (level == 0)
+                    {
+                        width = image.Width;
+                        height = image.Height;
+                        stride = image.Stride;
+                        dataOffset = 0;
+                    }
+                    else
+                    {
+                        var mip = image.MipMaps[level - 1];
+                        width = mip.Width;
+                        height = mip.Height;
+                        stride = mip.Stride;
+                        dataOffset = mip.DataOffset;
+                    }
+
+                    var expectedWidth = Math.Max(1, layout.Width >> level);
+                    var expectedHeight = Math.Max(1, layout.Height >> level);
+                    if (width != expectedWidth || height != expectedHeight)
+                        throw new InvalidDataException(
+                            $"decoded mip {level} is {width}x{height}, expected {expectedWidth}x{expectedHeight}");
+
+                    var rowBytes = checked(width * channels);
+                    var lastRowEnd = checked((long)dataOffset + (long)(height - 1) * stride + rowBytes);
+                    if (dataOffset < 0 || stride < rowBytes || lastRowEnd > data.Length)
+                        throw new InvalidDataException($"decoded mip {level} pixel data is truncated");
+
+                    var bgra = new byte[checked(width * height * 4)];
+                    for (var y = 0; y < height; y++)
+                    {
+                        var source = dataOffset + y * stride;
+                        var target = y * width * 4;
+                        if (channels == 4)
+                        {
+                            Buffer.BlockCopy(data, source, bgra, target, width * 4);
+                            continue;
+                        }
+
+                        for (var x = 0; x < width; x++)
+                        {
+                            bgra[target + x * 4] = data[source + x * 3];
+                            bgra[target + x * 4 + 1] = data[source + x * 3 + 1];
+                            bgra[target + x * 4 + 2] = data[source + x * 3 + 2];
+                            bgra[target + x * 4 + 3] = 255;
+                        }
+                    }
+
+                    levels[level] = (bgra, width, height);
+                }
+
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                levels = [];
+                error = $"decode failed ({ex.GetType().Name}: {ex.Message})";
+                return false;
+            }
+        }
+
         // Decode the full-resolution image, shrink it with an area filter in the colour
         // space the format implies, build a complete mip chain and compress to the
         // source's own block format and header kind. Only BC1 and BC3 are re-encoded (the

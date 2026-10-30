@@ -6920,6 +6920,7 @@ namespace Editors.PackOptimizer.Core
             public byte[] Dds { get; init; } = [];
             public DdsLayout Layout { get; init; } = null!;
             private readonly Dictionary<int, (byte[] Bgra, int Width, int Height)?> _levels = [];
+            private int _mipChainAttemptedFromLevel = int.MaxValue;
 
             // Decoded pixels of one mip level (the source's own level, not a resample).
             public void SeedLevel(int level, (byte[] Bgra, int Width, int Height) decoded)
@@ -6928,8 +6929,8 @@ namespace Editors.PackOptimizer.Core
                     _levels[level] = decoded;
             }
 
-            // Outputs compose in parallel and share sources: one decode per level, under the source's lock
-            // (a source is decoded by whichever output asks first; the pixels are the same either way).
+            // Outputs compose in parallel and share sources. Pfim decodes the requested suffix in full,
+            // so retain each original mip; an earlier request can expand the cached suffix as needed.
             public (byte[] Bgra, int Width, int Height)? Level(int level)
             {
                 lock (_levels)
@@ -6937,15 +6938,36 @@ namespace Editors.PackOptimizer.Core
                     if (_levels.TryGetValue(level, out var cached))
                         return cached;
 
-                    (byte[] Bgra, int Width, int Height)? result = null;
-                    var dds = Dds;
-                    var ok = true;
-                    if (level > 0)
-                        ok = TrySliceDdsMips(Dds, Layout, level, out dds, out _);
-                    if (ok && TryDecodeDdsTopLevel(dds, out var bgra, out var width, out var height, out _))
-                        result = (bgra, width, height);
-                    _levels[level] = result;
-                    return result;
+                    if (level < 0 || level >= Layout.MipCount)
+                        return null;
+
+                    if (level < _mipChainAttemptedFromLevel)
+                    {
+                        _mipChainAttemptedFromLevel = level;
+                        var dds = Dds;
+                        var layout = Layout;
+                        var canDecode = true;
+                        if (level > 0)
+                        {
+                            canDecode = TrySliceDdsMips(Dds, Layout, level, out dds, out _);
+                            if (canDecode)
+                            {
+                                canDecode = TryReadDdsLayout(
+                                    dds.AsSpan(0, Math.Min(dds.Length, TextureDownscaleHeaderPeekBytes)).ToArray(),
+                                    out var slicedLayout);
+                                if (canDecode)
+                                    layout = slicedLayout;
+                            }
+                        }
+
+                        if (canDecode && TryDecodeDdsMipChain(dds, layout, out var decodedLevels, out _))
+                        {
+                            for (var decodedLevel = 0; decodedLevel < decodedLevels.Length; decodedLevel++)
+                                _levels.TryAdd(level + decodedLevel, decodedLevels[decodedLevel]);
+                        }
+                    }
+
+                    return _levels.TryGetValue(level, out cached) ? cached : null;
                 }
             }
         }
