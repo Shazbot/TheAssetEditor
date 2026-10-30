@@ -36,6 +36,7 @@ namespace Editors.PackOptimizer.Core
             state.CrossRigidGeneratedPayloadAnalysisEntries.Clear();
             state.CrossRigidAnalysisBlockerCounts.Clear();
             state.CrossRigidAnalysisBlockerExamples.Clear();
+            state.CrossRigidAnalysisBlockerCountsByVmd.Clear();
             state.CrossRigidRigidHeaderBlockerCounts.Clear();
             state.CrossRigidRigidHeaderBlockerRigidCombinations.Clear();
             state.CrossRigidRigidHeaderBlockerVmdRoots.Clear();

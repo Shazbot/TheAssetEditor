@@ -834,6 +834,9 @@ namespace Editors.PackOptimizer.Core
                 CrossRigidDisplacedSourceGeometryEntries { get; } = [];
             public Dictionary<string, int> CrossRigidAnalysisBlockerCounts { get; } =
                 new(StringComparer.Ordinal);
+            // Report-only: the same blockers attributed to the root VMD they were recorded for.
+            public Dictionary<string, Dictionary<string, int>> CrossRigidAnalysisBlockerCountsByVmd { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, List<string>> CrossRigidAnalysisBlockerExamples { get; } =
                 new(StringComparer.Ordinal);
             public Dictionary<string, int> CrossRigidRigidHeaderBlockerCounts { get; } =

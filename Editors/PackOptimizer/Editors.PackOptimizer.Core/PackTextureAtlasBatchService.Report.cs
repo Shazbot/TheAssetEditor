@@ -2114,6 +2114,7 @@ namespace Editors.PackOptimizer.Core
                     $"{state.CrossRigidRetainedSourceAssetPaths.Count:N0}");
                 sb.AppendLine(
                     "Cross-rigid source-asset retirement: DISABLED; originals are retained in this first writer.");
+                AppendCrossRigidRetirementReport(sb, state);
                 if (state.CrossRigidEmissionSkipCounts.Count != 0)
                 {
                     sb.AppendLine("Cross-rigid emission skip breakdown:");

@@ -1887,6 +1887,22 @@ namespace Editors.PackOptimizer.Core
             state.CrossRigidAnalysisBlockerCounts[reason] =
                 state.CrossRigidAnalysisBlockerCounts
                     .GetValueOrDefault(reason) + 1;
+            var exampleVmd = example;
+            var exampleEnd = exampleVmd.IndexOfAny(['[', ':']);
+            if (exampleEnd > 0)
+                exampleVmd = exampleVmd[..exampleEnd];
+            exampleVmd = Normalize(exampleVmd.Trim());
+            if (exampleVmd.EndsWith(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!state.CrossRigidAnalysisBlockerCountsByVmd.TryGetValue(exampleVmd, out var byReason))
+                {
+                    byReason = new Dictionary<string, int>(StringComparer.Ordinal);
+                    state.CrossRigidAnalysisBlockerCountsByVmd[exampleVmd] = byReason;
+                }
+
+                byReason[reason] = byReason.GetValueOrDefault(reason) + 1;
+            }
+
             if (!state.CrossRigidAnalysisBlockerExamples.TryGetValue(
                     reason,
                     out var examples))

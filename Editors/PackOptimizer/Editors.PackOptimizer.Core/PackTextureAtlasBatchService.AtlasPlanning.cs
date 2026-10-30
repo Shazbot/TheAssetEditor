@@ -2319,7 +2319,8 @@ namespace Editors.PackOptimizer.Core
             ArmyResidencyModel? model,
             IReadOnlyCollection<string> targetAssetPaths,
             IEnumerable<string> fallbackRoots,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IReadOnlySet<string>? excludedUnitIds = null)
         {
             if (model == null || model.PlayerCultureWeights.Count == 0)
                 return 0;
@@ -2336,6 +2337,8 @@ namespace Editors.PackOptimizer.Core
                 model,
                 normalizedTargets,
                 normalizedFallbackRoots);
+            if (excludedUnitIds != null && excludedUnitIds.Count != 0)
+                relevantUnitIds.ExceptWith(excludedUnitIds);
             cancellationToken.ThrowIfCancellationRequested();
             var relevantCultures = GetRelevantArmyCultures(
                 model,
