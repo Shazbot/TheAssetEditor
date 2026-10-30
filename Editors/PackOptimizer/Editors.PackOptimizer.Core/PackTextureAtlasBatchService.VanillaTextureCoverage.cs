@@ -230,13 +230,44 @@ namespace Editors.PackOptimizer.Core
             int cellCount)
         {
             var size = VanillaCoverageGridSize;
+            if (cellCount <= 0)
+                return;
+
             var wrappedRow = PositiveModulo(row, size);
-            var x = PositiveModulo(firstCell, size);
-            for (var count = Math.Min(cellCount, size); count > 0; count--)
+            var rowStartWord = wrappedRow * (size / 64);
+            if (cellCount >= size)
             {
-                var bit = wrappedRow * size + x;
-                grid[bit >> 6] |= 1UL << (bit & 63);
-                x = x + 1 == size ? 0 : x + 1;
+                for (var word = 0; word < size / 64; word++)
+                    grid[rowStartWord + word] |= ulong.MaxValue;
+                return;
+            }
+
+            var x = PositiveModulo(firstCell, size);
+            var firstRunCount = Math.Min(cellCount, size - x);
+            SetVanillaCoverageCellRange(grid, rowStartWord, x, firstRunCount);
+            var wrappedRunCount = cellCount - firstRunCount;
+            if (wrappedRunCount > 0)
+                SetVanillaCoverageCellRange(grid, rowStartWord, 0, wrappedRunCount);
+        }
+
+        private static void SetVanillaCoverageCellRange(
+            ulong[] grid,
+            int rowStartWord,
+            int firstCell,
+            int cellCount)
+        {
+            var firstWord = firstCell >> 6;
+            var lastCell = firstCell + cellCount - 1;
+            var lastWord = lastCell >> 6;
+            for (var word = firstWord; word <= lastWord; word++)
+            {
+                var firstBit = word == firstWord ? firstCell & 63 : 0;
+                var endBit = word == lastWord ? (lastCell & 63) + 1 : 64;
+                var bitCount = endBit - firstBit;
+                var mask = bitCount == 64
+                    ? ulong.MaxValue
+                    : ((1UL << bitCount) - 1) << firstBit;
+                grid[rowStartWord + word] |= mask;
             }
         }
 

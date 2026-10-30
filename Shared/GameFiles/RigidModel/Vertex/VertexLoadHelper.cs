@@ -381,6 +381,9 @@ namespace Shared.GameFormats.RigidModel.Vertex
                     currentSmallestError = error;
                     bestValueForW = testW;
                 }
+
+                if (error == 0f)
+                    break;
             }
 
             return bestValueForW;
@@ -412,6 +415,8 @@ namespace Shared.GameFormats.RigidModel.Vertex
                 var better = Vector256.LessThan(error, bestError);
                 bestError = Vector256.ConditionalSelect(better, error, bestError);
                 bestIndex = Vector256.ConditionalSelect(better.AsInt32(), laneIndex, bestIndex);
+                if (Vector256.EqualsAny(error, Vector256<float>.Zero))
+                    break;
                 laneIndex += step;
             }
 
