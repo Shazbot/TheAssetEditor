@@ -240,7 +240,7 @@ namespace Editors.PackOptimizer.Core
         /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
         /// stages next to this number, so changing the output without bumping the version fails the test.
         /// </summary>
-        public const int OutputVersion = 33;
+        public const int OutputVersion = 34;
 
         /// <summary>
         /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format

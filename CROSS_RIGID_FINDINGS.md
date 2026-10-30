@@ -853,6 +853,36 @@ One simulated page hit the budget in each pack (the report-only simulation of a 
 
 Biggest page-byte changes (in-game check candidates): Albion, the Cygor accessories set: `ogr_giant_accessories_01` (-964,416 B, atlas 1672x1712 -> 1752x1496), `alb_giant_ogr_giant_accessories_01` (-160,736), `alb_stonegiant_deadogr_warrior_head_01` (-32,256), used by Albion Giant, Bologs, Albion Giant (Stone Thrower), Cachtorr (and the Grudgebringer giant); `cust_emp_jade_wizard_body_01` (-41,536) on Druidic Priestess (`wyrd_druid_body_01`); `3k_animated_props_replacements_01` (-32,928) on Young Slingers. TEB (Tilea): `def_warriors_legs_01` (-321,888, 1024x1024 -> 456x696) on Mengil Manhide's Manflayers; `emp_reiksguard_morr_torso_01` (-162,368) on Inquisitor Lord (on foot, bhorse, grif and horse variants) and Lupio Sunscryer; `vmp_manfred_von_carstein_body_01` (-127,232) on Gashnag; `cth_shugengan_body_01` (-63,712) on Estragon's Pariahs; `hef_mage_torso_01` (-40,992) on Lucrezzia Belladonna; and the new set's group on Sisters of Fury (+2,897,904 B page). Checked in game.
 
+## 2026-10-30: cross-rigid cost and benefit, measured (budget lowered to 4 MiB; seven other ideas rejected)
+
+All runs use the workshop sources (TEB `2927296206\!ak_teb3.pack`, Albion `2873961274\ovn_albion.pack`). The bench-only switches added for them stay in the tree, so any of these numbers can be re-measured without new code: `--xr-physical-mib-per-draw`, `--xr-resident-mib-per-draw`, `--xr-growth-cap-mib`, `--xr-min-single-vmd-draws`, `--xr-joint-cap`, `--lod-weights`, `--cross-rigid-merges false`, `--compress-rigid-models true` (commits 64fad19b5, e8f3e6179, b5825105f, e446139a5). Raw results are in `K:\projects\assedfork-bench\agent-scratch-xr\results.md` and `agent-scratch-lodw\results.md`.
+
+**Adopted: physical budget 16 -> 4 MiB of generated geometry per expected draw (OutputVersion 34).** The cost curve in the value-gate section shows a long, expensive tail:
+
+| TEB budget | merged rigids | pack growth | draws saved | share of the 16 MiB saving |
+|---|---|---|---|---|
+| 16 MiB (old) | 153 | +111.8 MB | 47.16 | 100 % |
+| 8 MiB | 137 | +94.3 MB | 46.96 | 99.6 % |
+| **4 MiB (new)** | **107** | **+63.9 MB** | **46.39** | **98.4 %** |
+| 2 MiB | 86 | +41.9 MB | 44.26 | 93.9 % |
+| 1 MiB | 62 | +26.3 MB | 38.58 | 81.8 % |
+| off | 0 | 0 | 0 | 0 % |
+
+Albion at 4 MiB: 12 instead of 18 rigids, +9.8 instead of +25.7 MB, 6.50 instead of 7.50 draws (86.8 %); the dropped ones are 8 near-identical fen beast/hulk payloads at ~10.5 MiB per draw. With LZ4 rigids (as WHMM ships them) the TEB growth is 65.8 MB at 16 MiB and 37.6 MB at 4 MiB. 2 MiB is too uneven across mods (Albion keeps only 66 %). The shared texture repack is unaffected by the budget: identical pages and bytes at every budget and with cross-rigid off (only page names change, their hash covers the rigid set).
+
+Rejected, do not retry without a new reason:
+
+1. **A tighter budget does not save time.** The cross-rigid analysis takes 42-50 s on TEB at every budget; the gate only acts after analysis. A time gain needs pruning before analysis.
+2. **A cumulative growth cap is the wrong knob.** It fills in benefit order, not cost order: a 32 MiB cap keeps 33 draws for 32 MiB, the 0.5 MiB/draw budget keeps the same 33 draws for 8.8 MiB. The 256 MiB cap and the 0.5 MiB resident budget never bind.
+3. **Retirement credit / whole-unit completion** (report section "Cross-rigid retirement potential"). The selected set covers 3 % of TEB's mergeable occurrences and no unit completely; even the union of all candidates covers only 5 of 95 TEB units (4 of 5 on Albion). The exact residency credit for sources no army unit loads any more is 3-4 % of the generated resident bytes (TEB 0.24 MiB selected, 1.74 MiB for all candidates). Crediting it lets 0 extra payloads through on TEB and 3 on Albion (+0.43 draws). Pack retirement finds 0 removable sources; even after fixing the bookkeeping blocker below and taking every candidate, the ceiling is ~10.5 MiB on TEB and ~11.7 MiB on Albion, and a merged copy replaces every retired byte several times over (one part appears in many combinations), so retirement only reduces growth. Prioritising coverage when merges conflict cannot beat the all-candidates numbers above. The 1,375 occurrence conflicts on TEB are mostly losing alternatives (pair/triple/quadruple fallbacks) of payloads that were picked.
+   - Bookkeeping note: `ArmyResidencyModel.UnitIdsByAssetPath` adds every WSModel a unit reaches as its own `ResidencyAsset` root (`PackTextureAtlasBatchService.Traversal.cs` ~169), so a retirement check reads every WSModel as externally used. Fix that first if retirement is ever built.
+4. **Scenario LOD weights.** The equal 25 % per LOD is crude (units switch at 10/20/30/10000 m), and payloads that save draws only at LOD2/3 (LOD0/1 often mix weighted2 and weighted4 and stay unmerged; the merge is decided per LOD) are credited 1.7x more under 0.05/0.10/0.15/0.70. But the reweighted selection scores the same as the equal-weight selection under the same weights (TEB 52.86 vs ~53.1 draws) while spending 11-27 MiB more geometry (11 MiB at 4 MiB); Albion's selection is unchanged because its merges save at LOD0/1. Keep 25 % each.
+5. **Atlases on with cross-rigid (WHMM keeps `buildAtlases: false`).** TEB: +28.1 atlas draws on top of the unchanged 47.2 cross-rigid draws, but pack +34 MB, resident BCn +9.3 MiB, the shared repack saves 37 MB less (52 instead of 59 sets) and the run takes ~2.4x as long (353 vs 146 s). The ideal-merge section's "~110 draws for 64 MiB with shared atlases" is an upper bound that ignores texture cost.
+6. **Joint-state cap above 4,096.** 16,384 / 65,536 add +0.02 / +0.35 draws; most of the ~6,000 excluded plans stay excluded even at 65,536. 16,384 finds 18.5 MiB cheaper geometry at the old 16 MiB budget but only 3.4 MiB at 4 MiB, for +0.6-1.8 GB peak memory.
+7. **A minimum-draws floor** (not run): payloads under 0.1 draws are 20 payloads, 13.7 MiB and 1.6 draws on TEB; bytes per draw is the better knob and already removes most of them.
+
+Related, same round: the opt-in opaque alpha-shader switch (OutputVersion 33) gives GPU time only. Every switched texture had alpha exactly 255, so compaction had already made it BC1 before the switch; no bytes are saved.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).
@@ -912,3 +942,4 @@ Biggest page-byte changes (in-game check candidates): Albion, the Cygor accessor
 8. Do not build per-texture reverse atlasing or per-unit atlases (Options A and B).
 9. Exact compaction is the cheapest memory win, with no visual risk. Enable it whenever a pack is processed. Dropping unread alpha is equally safe as long as the shader table matches the game build.
 10. Do not copy vanilla rigids to unlock more repack sets; only 3 rigids block sets today.
+11. Cross-rigid tuning is done (2026-10-30): keep the 4 MiB physical budget, equal LOD weights, the 4,096 joint-state cap and atlases off in WHMM; retirement credit and unit completion are not worth building (see the 2026-10-30 section).

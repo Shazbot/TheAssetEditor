@@ -577,13 +577,13 @@ namespace Test.PackOptimizer.Core
                 .ToString();
         }
 
-        // Ceilings are 1x the portfolio budgets: 16 MiB physical and
+        // Ceilings are 1x the portfolio budgets: 4 MiB physical and
         // 0.5 MiB resident per marginal expected draw.
         [Test]
         public void PerPayloadCeiling_CheapPayload_IsNotRejected()
         {
             Assert.That(
-                GetCeilingDecision(10 * MiB, 0.1 * MiB, 1.0),
+                GetCeilingDecision(3 * MiB, 0.1 * MiB, 1.0),
                 Is.Null);
         }
 
@@ -591,7 +591,7 @@ namespace Test.PackOptimizer.Core
         public void PerPayloadCeiling_ExactlyAtCeiling_IsNotRejected()
         {
             Assert.That(
-                GetCeilingDecision(16 * MiB, 0.5 * MiB, 1.0),
+                GetCeilingDecision(4 * MiB, 0.5 * MiB, 1.0),
                 Is.Null);
         }
 
@@ -18959,6 +18959,9 @@ namespace Test.PackOptimizer.Core
             // source files; opaque alpha-tested character materials moved to the non-alpha twin shader). Both are off
             // by default and neither is among the pinned stages, so the hash is unchanged.
             [33] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
+            // 34: the cross-rigid physical budget drops from 16 to 4 MiB of generated geometry per expected army
+            // draw. The golden fixture's payloads are far below either limit, so the hash is unchanged.
+            [34] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
         };
 
         private static string ComputeOutputGoldenHash()
