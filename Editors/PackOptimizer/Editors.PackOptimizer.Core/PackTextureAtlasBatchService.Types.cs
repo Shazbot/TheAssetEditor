@@ -1055,6 +1055,7 @@ namespace Editors.PackOptimizer.Core
             // Opt-in move of opaque alpha-tested character materials to the non-alpha twin shader.
             public bool SwitchOpaqueAlphaShaders { get; set; }
             public OpaqueAlphaResult? OpaqueAlpha { get; set; }
+            public XmlMinificationSummary? XmlMinification { get; set; }
             public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; set; } = EditorLodLevelSettings.Default;
             public float EditorLodBoneWeight { get; set; }
             public bool EditorLodJointPriority { get; set; }

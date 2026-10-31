@@ -2622,6 +2622,7 @@ namespace Editors.PackOptimizer.Core
                 AppendTextureCompactionSection(sb, state);
                 AppendOpaqueAlphaSection(sb, state);
             }
+            AppendXmlMinificationSection(sb, state);
 
             if (state.UnitCategoryResolution != null)
             {

@@ -19340,6 +19340,9 @@ namespace Test.PackOptimizer.Core
             // 40: editor-LOD-only remakes now reach the geometry optimization stage after planning.
             // The golden fixture does not model BatchState selection, so its output hash is unchanged.
             [40] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 41: final XML minification is exercised by dedicated pack-output tests; the pinned
+            // stage fixture below does not run a whole-pack output pass, so its hash is unchanged.
+            [41] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()

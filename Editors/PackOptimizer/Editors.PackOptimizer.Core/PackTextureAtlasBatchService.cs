@@ -865,6 +865,10 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 phaseStopwatch.Restart();
+                MinifyXmlFiles(state, cancellationToken, progress);
+                state.PhaseDurations["Minify XML"] = phaseStopwatch.Elapsed;
+
+                phaseStopwatch.Restart();
                 ValidateOutput(state, vmdRoots, cancellationToken, progress);
                 state.PhaseDurations["Validate output"] = phaseStopwatch.Elapsed;
 
