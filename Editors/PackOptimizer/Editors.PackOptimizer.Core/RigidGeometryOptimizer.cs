@@ -1,4 +1,5 @@
 using System.Numerics;
+using GameWorld.MeshOptimizer;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;
 using Shared.GameFormats.RigidModel.Vertex;
@@ -15,8 +16,6 @@ namespace Editors.PackOptimizer.Core
 
     public static class RigidGeometryOptimizer
     {
-        private const int VertexCacheSize = 32;
-
         public static GeometryOptimizationStatistics Optimize(RmvModel model)
         {
             var verticesBefore = model.Mesh.VertexList.Length;
@@ -28,8 +27,8 @@ namespace Editors.PackOptimizer.Core
             // Preserve every source triangle, including degenerate/zero-area triangles.
             // They are part of the source topology and can be significant to downstream
             // tooling even when they rasterize no pixels. The optimizer may deduplicate
-            // identical vertex payloads and reorder triangles for cache locality, but it
-            // must never change the index/triangle count.
+            // identical vertex payloads and reorder triangles for cache locality and
+            // overdraw, but it must never change the index/triangle count.
             var sourceIndices = model.Mesh.IndexList;
             var referencedBeforeDedupe = new HashSet<ushort>(sourceIndices);
             var unreferencedVerticesRemoved = verticesBefore - referencedBeforeDedupe.Count;
@@ -61,13 +60,26 @@ namespace Editors.PackOptimizer.Core
             var duplicateVerticesRemoved =
                 referencedBeforeDedupe.Count - deduplicatedVertices.Count;
 
-            var cacheOptimizedIndices = OptimizeTriangleOrder(
-                remappedIndices,
-                deduplicatedVertices.Count);
+            var vertexPositions = new float[checked(deduplicatedVertices.Count * 3)];
+            for (var vertexIndex = 0; vertexIndex < deduplicatedVertices.Count; vertexIndex++)
+            {
+                var position = deduplicatedVertices[vertexIndex].Position;
+                var positionOffset = vertexIndex * 3;
+                vertexPositions[positionOffset] = position.X;
+                vertexPositions[positionOffset + 1] = position.Y;
+                vertexPositions[positionOffset + 2] = position.Z;
+            }
+
+            // Overdraw ordering is geometric and can change alpha-blended appearance.
+            // This model-level optimizer has no WSModel shader assignment to classify it.
+            var cacheAndOverdrawOptimizedIndices =
+                MeshOptTriangleOrderOptimizer.OptimizeVertexCacheAndOverdraw(
+                    remappedIndices,
+                    vertexPositions);
 
             var (reorderedVertices, reorderedIndices) = ReorderVerticesByFirstUse(
                 deduplicatedVertices,
-                cacheOptimizedIndices);
+                cacheAndOverdrawOptimizedIndices);
 
             if (reorderedIndices.Length != indicesBefore)
             {
@@ -85,125 +97,6 @@ namespace Editors.PackOptimizer.Core
                 reorderedIndices.Length,
                 duplicateVerticesRemoved,
                 unreferencedVerticesRemoved);
-        }
-
-        private static ushort[] OptimizeTriangleOrder(
-            IReadOnlyList<ushort> indices,
-            int vertexCount)
-        {
-            var triangleCount = indices.Count / 3;
-            if (triangleCount <= 1)
-                return indices.ToArray();
-
-            var adjacency = new List<int>[vertexCount];
-            for (var i = 0; i < adjacency.Length; i++)
-                adjacency[i] = [];
-
-            for (var triangle = 0; triangle < triangleCount; triangle++)
-            {
-                var baseIndex = triangle * 3;
-                adjacency[indices[baseIndex]].Add(triangle);
-                adjacency[indices[baseIndex + 1]].Add(triangle);
-                adjacency[indices[baseIndex + 2]].Add(triangle);
-            }
-
-            var emitted = new bool[triangleCount];
-            var remainingValence = adjacency.Select(x => x.Count).ToArray();
-            var cache = new List<ushort>(VertexCacheSize);
-            var output = new ushort[indices.Count];
-            var outputIndex = 0;
-            var nextLinearTriangle = 0;
-            var candidates = new HashSet<int>();
-
-            for (var emittedCount = 0; emittedCount < triangleCount; emittedCount++)
-            {
-                var bestTriangle = -1;
-                var bestScore = int.MinValue;
-
-                foreach (var candidate in candidates)
-                {
-                    if (emitted[candidate])
-                        continue;
-
-                    var baseIndex = candidate * 3;
-                    var a = indices[baseIndex];
-                    var b = indices[baseIndex + 1];
-                    var c = indices[baseIndex + 2];
-
-                    var cacheHits =
-                        (cache.Contains(a) ? 1 : 0) +
-                        (cache.Contains(b) ? 1 : 0) +
-                        (cache.Contains(c) ? 1 : 0);
-
-                    var valence =
-                        remainingValence[a] +
-                        remainingValence[b] +
-                        remainingValence[c];
-
-                    var score = cacheHits * 100000 - valence;
-                    if (score > bestScore ||
-                        (score == bestScore && candidate < bestTriangle))
-                    {
-                        bestTriangle = candidate;
-                        bestScore = score;
-                    }
-                }
-
-                if (bestTriangle < 0)
-                {
-                    while (nextLinearTriangle < triangleCount &&
-                           emitted[nextLinearTriangle])
-                    {
-                        nextLinearTriangle++;
-                    }
-
-                    bestTriangle = nextLinearTriangle;
-                }
-
-                var triangleBase = bestTriangle * 3;
-                var triangleVertices = new[]
-                {
-                    indices[triangleBase],
-                    indices[triangleBase + 1],
-                    indices[triangleBase + 2]
-                };
-
-                output[outputIndex++] = triangleVertices[0];
-                output[outputIndex++] = triangleVertices[1];
-                output[outputIndex++] = triangleVertices[2];
-                emitted[bestTriangle] = true;
-                candidates.Remove(bestTriangle);
-
-                foreach (var vertex in triangleVertices)
-                    remainingValence[vertex]--;
-
-                TouchCache(cache, triangleVertices);
-
-                candidates.Clear();
-                foreach (var vertex in cache)
-                {
-                    foreach (var triangle in adjacency[vertex])
-                    {
-                        if (!emitted[triangle])
-                            candidates.Add(triangle);
-                    }
-                }
-            }
-
-            return output;
-        }
-
-        private static void TouchCache(List<ushort> cache, IReadOnlyList<ushort> vertices)
-        {
-            for (var i = vertices.Count - 1; i >= 0; i--)
-            {
-                var vertex = vertices[i];
-                cache.Remove(vertex);
-                cache.Insert(0, vertex);
-            }
-
-            if (cache.Count > VertexCacheSize)
-                cache.RemoveRange(VertexCacheSize, cache.Count - VertexCacheSize);
         }
 
         private static (CommonVertex[] Vertices, ushort[] Indices) ReorderVerticesByFirstUse(

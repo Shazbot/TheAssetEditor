@@ -75,6 +75,17 @@ internal static partial class MeshOptNative
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static unsafe partial void OptimizeVertexCache(uint* destination, uint* indices, nuint indexCount, nuint vertexCount);
 
+    [LibraryImport(LibraryName, EntryPoint = "meshopt_optimizeOverdraw")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static unsafe partial void OptimizeOverdraw(
+        uint* destination,
+        uint* indices,
+        nuint indexCount,
+        float* vertexPositions,
+        nuint vertexCount,
+        nuint vertexPositionsStride,
+        float threshold);
+
     [LibraryImport(LibraryName, EntryPoint = "meshopt_optimizeVertexFetchRemap")]
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static unsafe partial nuint OptimizeVertexFetchRemap(uint* destination, uint* indices, nuint indexCount, nuint vertexCount);

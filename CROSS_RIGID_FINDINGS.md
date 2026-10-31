@@ -982,3 +982,21 @@ Goal: less LOD3 geometry. All runs on the v36 code with the skinning/shape repor
 9. Exact compaction is the cheapest memory win, with no visual risk. Enable it whenever a pack is processed. Dropping unread alpha is equally safe as long as the shader table matches the game build.
 10. Do not copy vanilla rigids to unlock more repack sets; only 3 rigids block sets today.
 11. Cross-rigid tuning is done (2026-10-30): keep the 4 MiB physical budget, equal LOD weights, the 4,096 joint-state cap and atlases off in WHMM; retirement credit and unit completion are not worth building (see the 2026-10-30 section).
+
+## 2026-10-31: Native triangle ordering (OutputVersion 38)
+
+Adopted `meshopt_optimizeVertexCache` followed by `meshopt_optimizeOverdraw`
+with threshold **1.05f**, then the existing first-use vertex remap, for the
+rigids Optimize Pack already rewrites. The threshold permits up to 5% cache
+efficiency degradation relative to the native cache pass to reduce overdraw.
+
+In the original editor-pipeline experiment, TEB's geometry pass took
+4.097 → 1.763 s and Albion's took 4.341 → 1.682 s. Estimated shaded pixels
+fell 8.64% / 13.17%; estimated vertex transformations fell 0.48% / 1.38%.
+Topology, full vertex attributes, materials and pack sizes were preserved.
+WHMM found no added diagnostics; existing errors and incomplete coverage remain.
+
+See [Meshoptimizer findings](MESHOPT_FINDINGS.md) for inputs, baseline revision,
+measurement scope, per-LOD exceptions and validation limits. These are static
+analyzer estimates from the pre-extraction pipeline; the newer host pipeline
+was not re-benchmarked. Blended transparency still needs an in-game check.

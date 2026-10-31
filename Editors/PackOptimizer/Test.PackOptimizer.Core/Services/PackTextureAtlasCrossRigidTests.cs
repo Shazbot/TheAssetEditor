@@ -19092,6 +19092,8 @@ namespace Test.PackOptimizer.Core
             // 37: editor-LOD level 3 and deeper rebuild with half the bone weight. The editor-LOD fixture has no skinned
             // LOD3 part, so the hash is unchanged.
             [37] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
+            // 38: native vertex-cache ordering followed by overdraw ordering at threshold 1.05.
+            [38] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()
