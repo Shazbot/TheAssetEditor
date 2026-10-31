@@ -203,6 +203,8 @@ namespace Editors.PackOptimizer.Core
             // an emitted plan even when the rewritten VMD no longer reaches it.
             toRemove.ExceptWith(
                 state.CrossRigidRetainedSourceAssetPaths);
+            toRemove.ExceptWith(
+                state.SharedTextureRepack?.CloneProtectedTextures ?? []);
 
             var outputPaths = state.Output.GetAllFiles().Keys.ToList();
             for (var outputIndex = 0; outputIndex < outputPaths.Count; outputIndex++)
@@ -226,6 +228,10 @@ namespace Editors.PackOptimizer.Core
                     toRemove.Add(normalized);
                 }
             }
+            // Atlas outputs are marked for deletion in the loop above, after the first protection
+            // pass. Reapply this protection so an immutable external user can keep any source path.
+            toRemove.ExceptWith(
+                state.SharedTextureRepack?.CloneProtectedTextures ?? []);
 
             // Done before the reference protection: a kept override stays in the pack and its
             // own references must then keep their targets alive.
@@ -780,7 +786,7 @@ namespace Editors.PackOptimizer.Core
                 state,
                 ".rigid_model_v2",
                 errors,
-                state.CrossRigidGeneratedRigidPaths);
+                GetExpectedAddedRigidPathsForValidation(state));
 
             var validationVmds = state.ModifiedVmdDocuments.Keys
                 .OrderBy(
@@ -1295,6 +1301,16 @@ namespace Editors.PackOptimizer.Core
                state.ResolutionProviders.Find(state.Source, path) != null ||
                GetGameplayTraversalContainers(state).Any(container => container.ContainsFile(path)) ||
                _packFileService.FindFile(path) != null;
+
+        private static HashSet<string> GetExpectedAddedRigidPathsForValidation(BatchState state)
+        {
+            var expected = new HashSet<string>(
+                state.CrossRigidGeneratedRigidPaths,
+                StringComparer.OrdinalIgnoreCase);
+            if (state.SharedTextureRepack is { } repack)
+                expected.UnionWith(repack.ClonedRigidPathBySource.Values);
+            return expected;
+        }
 
         private static void ValidateUnchangedModelPathSet(
             BatchState state,

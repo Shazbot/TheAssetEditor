@@ -12,17 +12,20 @@ using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
 using Shared.GameFormats.RigidModel.Types;
+using Shared.GameFormats.Vmd;
+using static Shared.GameFormats.Vmd.VariantMeshDefinition;
 
 namespace Editors.PackOptimizer.Core
 {
     public sealed partial class PackTextureAtlasBatchService
     {
-        // Opt-in "Repack shared textures". Mod rigids that keep a whole large texture loaded
+        // Opt-in "Repack shared textures". Rewritable rigids that keep a whole large texture loaded
         // while their parts use a few percent of it get new, smaller textures holding only the
         // used regions at the SAME texel density (no downscaling), new UVs and new materials;
         // the source files are never edited. It acts on signature sets of the per-unit repack
-        // estimate (Option C) whose users are all mod-owned rigids, one generated texture
-        // serving every rigid of the set, and re-checks the saving on the ACTUAL bytes before
+        // estimate (Option C) whose consumers form a safe rewrite closure, one generated texture
+        // serving every rewritten rigid (including private clones of external rigids), and re-checks
+        // the saving on the ACTUAL bytes before
         // it writes anything.
         //
         // Design in short:
@@ -773,6 +776,11 @@ namespace Editors.PackOptimizer.Core
             public HashSet<string> WsModels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
             // A rigid the cross-rigid writer generated (lives in memory only).
             public bool Generated { get; init; }
+            // The original is immutable; this set's edits are written to a private clone.
+            public string? ClonePath { get; init; }
+            public HashSet<string> CloneWsModels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> CloneVmds { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> CloneProtectedTextures { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         }
 
         // What one planning attempt of a seed set may do and what it ended up with. With Allow
@@ -1106,6 +1114,15 @@ namespace Editors.PackOptimizer.Core
             public List<SharedRepackBuiltSet> BuiltSets { get; } = [];
             public List<string> ValidationErrors { get; } = [];
             public HashSet<string> RepackedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // Original path -> private output path for rigids that cannot safely be rewritten in place.
+            public Dictionary<string, string> ClonedRigidPathBySource { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string> ClonedSourcePathByRigid { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> ClonedRigidWsModelsBySource { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> ClonedRigidVmdsBySource { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // Textures still used by immutable external consumers of an original rigid/WSModel.
+            public HashSet<string> CloneProtectedTextures { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> EmbeddedRewrittenRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<(string Rigid, int Lod, int Part, TextureType Type)> EmbeddedRewrittenPaths { get; } = [];
             // Embedded material type of every rewritten direct part.
@@ -1886,8 +1903,13 @@ namespace Editors.PackOptimizer.Core
             }
 
             Dictionary<string, HashSet<string>>? rigidReferrers = null;
-            var rigidCache = new Dictionary<string, (RmvFile? Rigid, string? Reason)>(
-                StringComparer.OrdinalIgnoreCase);
+            var rigidCache = new Dictionary<string, (
+                RmvFile? Rigid,
+                string? Reason,
+                string? ClonePath,
+                HashSet<string> CloneWsModels,
+                HashSet<string> CloneVmds,
+                HashSet<string> ProtectedTextures)>(StringComparer.OrdinalIgnoreCase);
             var partCache = new Dictionary<(string Rigid, int Lod, int Part), SharedRepackPart>();
             var snapshots = new Dictionary<string, SharedRepackRigidSnapshot>(StringComparer.OrdinalIgnoreCase);
             var movedParts = new Dictionary<string, HashSet<(int Lod, int Part)>>(StringComparer.OrdinalIgnoreCase);
@@ -1896,7 +1918,8 @@ namespace Editors.PackOptimizer.Core
             void Skip(string label, string reason)
                 => result.Skips.Add((label, reason));
 
-            (RmvFile? Rigid, string? Reason) GetRigid(string rigidPath)
+            (RmvFile? Rigid, string? Reason, string? ClonePath, HashSet<string> CloneWsModels,
+                HashSet<string> CloneVmds, HashSet<string> ProtectedTextures) GetRigid(string rigidPath)
             {
                 if (rigidCache.TryGetValue(rigidPath, out var cached))
                     return cached;
@@ -1904,7 +1927,24 @@ namespace Editors.PackOptimizer.Core
                 rigidReferrers ??= state.RigidReferrerIndex ??=
                     IndexSharedRepackRigidReferrers(state, cancellationToken);
                 RmvFile? rigid = null;
+                string? clonePath = null;
+                var cloneWsModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var cloneVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var protectedTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var generated = state.CrossRigidGeneratedRigidPaths.Contains(rigidPath);
+                var externalRigidFile = !state.Source.ContainsFile(rigidPath)
+                    ? ResolveGameplayTraversalContainer(
+                        state.Source, containers, rigidPath, state.ResolutionProviders)?.FindFile(rigidPath)
+                    : null;
+                string? BeforeWsModelChecks()
+                    => state.AtlasChangedRigids.Contains(rigidPath)
+                        ? SharedRepackReasonAtlasChangedRigid
+                        : unsafeWsByDirectRigid.TryGetValue(rigidPath, out var unsafeModels) && unsafeModels.Count != 0
+                            ? GetSharedRepackUnsafeWsModelReason(state, unsafeModels)
+                        : state.ModifiedRigids.Contains(rigidPath) && !result.RepackedRigids.Contains(rigidPath)
+                            ? "the rigid was already modified by another stage"
+                            : null;
+
                 // A generated rigid lives in memory only: it is not owned by the source pack and
                 // no file refers to it, so the ownership checks do not apply. It is drawn only
                 // through the generated WSModels bound to it, which must all be generated ones.
@@ -1916,37 +1956,63 @@ namespace Editors.PackOptimizer.Core
                         rigidPath,
                         wsByRigid.GetValueOrDefault(rigidPath) ?? [],
                         rigidReferrers,
-                        () => state.AtlasChangedRigids.Contains(rigidPath)
-                            ? SharedRepackReasonAtlasChangedRigid
-                            : unsafeWsByDirectRigid.TryGetValue(rigidPath, out var unsafeModels) && unsafeModels.Count != 0
-                                ? GetSharedRepackUnsafeWsModelReason(state, unsafeModels)
-                            : state.ModifiedRigids.Contains(rigidPath) && !result.RepackedRigids.Contains(rigidPath)
-                                ? "the rigid was already modified by another stage"
-                                : null,
+                        BeforeWsModelChecks,
                         allowDirectGameplayConsumers: !SharedRepackDirectRigidsDisabled,
                         ignoredWsModelReferrers: unusedWsByRigid.GetValueOrDefault(rigidPath));
 
-                if (reason == null)
+                if (reason != null && !generated && externalRigidFile != null)
                 {
-                    try
+                    if (TryBuildSharedRepackClonePlan(
+                            state,
+                            rigidPath,
+                            wsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                            GetDirectGameplayRigidConsumers(state, rigidPath),
+                            BeforeWsModelChecks,
+                            out clonePath,
+                            out cloneWsModels,
+                            out cloneVmds,
+                            out var cloneReason,
+                            out protectedTextures))
+                    {
+                        reason = null;
+                    }
+                    else if (cloneReason != null &&
+                             cloneReason.StartsWith("no free output path", StringComparison.Ordinal))
+                    {
+                        reason = cloneReason;
+                    }
+                }
+
+                try
+                {
+                    if (reason == null)
                     {
                         rigid = generated
                             ? state.RigidModels.GetValueOrDefault(rigidPath)
                             : loadRigid(rigidPath);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        rigid = null;
-                    }
-
-                    if (rigid?.ModelList == null)
-                    {
-                        rigid = null;
-                        reason = "the rigid could not be read";
+                        if (rigid == null && !generated && externalRigidFile != null)
+                        {
+                            rigid = ModelFactory.Create().Load(externalRigidFile.DataSource.ReadData());
+                            state.RigidModels[rigidPath] = rigid;
+                        }
                     }
                 }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    rigid = null;
+                }
 
-                cached = (rigid, reason);
+                if (reason == null && rigid?.ModelList == null)
+                {
+                    rigid = null;
+                    reason = "the rigid could not be read";
+                    clonePath = null;
+                    cloneWsModels.Clear();
+                    cloneVmds.Clear();
+                    protectedTextures.Clear();
+                }
+
+                cached = (rigid, reason, clonePath, cloneWsModels, cloneVmds, protectedTextures);
                 rigidCache[rigidPath] = cached;
                 return cached;
             }
@@ -1989,7 +2055,7 @@ namespace Editors.PackOptimizer.Core
             {
                 if (!setRigidCache.TryGetValue(rigidPath, out var item))
                 {
-                    var (loaded, rigidReason) = GetRigid(rigidPath);
+                    var (loaded, rigidReason, clonePath, cloneWsModels, cloneVmds, protectedTextures) = GetRigid(rigidPath);
                     if (rigidReason == SharedRepackReasonAtlasChangedRigid)
                         result.RigidsChangedByAtlasing.Add(rigidPath);
                     var generatedRigid = state.CrossRigidGeneratedRigidPaths.Contains(rigidPath);
@@ -2005,6 +2071,10 @@ namespace Editors.PackOptimizer.Core
                         Reason = rigidReason ?? (loaded == null ? "the rigid could not be read" : null),
                         Parts = partsByRigid.GetValueOrDefault(rigidPath) ?? [],
                         WsModels = wsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                        ClonePath = clonePath,
+                        CloneWsModels = cloneWsModels,
+                        CloneVmds = cloneVmds,
+                        CloneProtectedTextures = protectedTextures,
                     };
                     setRigidCache[rigidPath] = item;
                 }
@@ -2470,14 +2540,15 @@ namespace Editors.PackOptimizer.Core
             // Geometry invariants of every rewritten rigid, against the snapshots.
             foreach (var (path, snapshot) in snapshots.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
             {
-                var rigid = rigidCache[path].Rigid!;
+                var sourcePath = result.ClonedSourcePathByRigid.GetValueOrDefault(path) ?? path;
+                var rigid = state.RigidModels.GetValueOrDefault(path) ?? rigidCache[sourcePath].Rigid!;
                 CompareSharedRepackSnapshot(
                     path,
                     rigid,
                     snapshot,
                     movedParts.GetValueOrDefault(path) ?? [],
                     result.EmbeddedRewrittenPaths
-                        .Where(item => item.Rigid.Equals(path, StringComparison.OrdinalIgnoreCase))
+                        .Where(item => item.Rigid.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
                         .Select(item => (item.Lod, item.Part))
                         .ToHashSet(),
                     result.ValidationErrors);
@@ -2762,6 +2833,298 @@ namespace Editors.PackOptimizer.Core
             return consumers;
         }
 
+        // Shared repack can rewrite an external rigid safely when it gives the source pack's
+        // editable consumers a private copy. The original remains available to every consumer
+        // that cannot be redirected. Exact texture compaction keeps using the stricter helper above.
+        private static bool TryBuildSharedRepackClonePlan(
+            BatchState state,
+            string rigidPath,
+            HashSet<string> boundWsModels,
+            HashSet<string> directConsumers,
+            Func<string?> beforeWsModelChecks,
+            out string? clonePath,
+            out HashSet<string> cloneWsModels,
+            out HashSet<string> cloneVmds,
+            out string? failure,
+            out HashSet<string> protectedTextures)
+        {
+            rigidPath = Normalize(rigidPath);
+            clonePath = null;
+            cloneWsModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            cloneVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            protectedTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            failure = null;
+
+            failure = beforeWsModelChecks();
+            if (failure != null)
+                return false;
+            if (!IsGameplayConsumerDiscoverySafeForAsset(state, rigidPath))
+            {
+                failure = "gameplay consumer discovery for the rigid is incomplete";
+                return false;
+            }
+            if (SharedRepackDirectRigidsDisabled && HasDirectGameplayRigidConsumer(state, rigidPath))
+            {
+                failure = "direct rigid rewriting is disabled";
+                return false;
+            }
+
+            foreach (var ws in boundWsModels.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!state.Source.ContainsFile(ws) || OverridesVanillaPath(state, ws) ||
+                    state.Consumers?.TryBlock(ws, "repack") == true)
+                {
+                    failure = $"WSModel {ws} is not safe to redirect in the source pack";
+                    return false;
+                }
+
+                var document = GetWsDocument(state, ws);
+                if (document == null ||
+                    !Normalize(document.SelectSingleNode("/model/geometry")?.InnerText)
+                        .Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    failure = $"WSModel {ws} could not be verified as a source-owned rigid consumer";
+                    return false;
+                }
+
+                cloneWsModels.Add(ws);
+            }
+
+            var directVmds = GetSharedRepackSourceDirectRigidVmds(state, rigidPath);
+            cloneVmds.UnionWith(directVmds);
+            if (cloneWsModels.Count == 0 && cloneVmds.Count == 0)
+            {
+                failure = "there is no source-owned WSModel or direct VMD consumer to redirect";
+                return false;
+            }
+
+            // An external WSModel keeps its original material/texture paths. Those texture paths
+            // are removed from the repack set so the generated pages do not claim its bytes.
+            var immutableWsModels = GetImmutableGameplayWsModelConsumersForRigid(
+                    state, rigidPath, "GetRigidNotOnlyThroughOwnedWsModelsReason")
+                .Where(path => path.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
+                              !state.Source.ContainsFile(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var ws in immutableWsModels)
+            {
+                var file = ResolveGameplayTraversalContainer(
+                        state.Source, GetGameplayTraversalContainers(state), ws, state.ResolutionProviders)?
+                    .FindFile(ws);
+                if (file == null)
+                {
+                    failure = $"external WSModel {ws} could not be read to preserve its textures";
+                    return false;
+                }
+
+                XmlDocument document;
+                try
+                {
+                    document = LoadXml(file);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failure = $"external WSModel {ws} could not be read to preserve its textures ({ex.Message})";
+                    return false;
+                }
+
+                foreach (XmlNode node in document.SelectNodes("/model/materials/material") ?? EmptyXmlNodeList)
+                {
+                    var material = Normalize(node.InnerText);
+                    var materialFile = ResolveGameplayTraversalContainer(
+                            state.Source, GetGameplayTraversalContainers(state), material, state.ResolutionProviders)?
+                        .FindFile(material);
+                    if (materialFile == null)
+                    {
+                        failure = $"external WSModel {ws} material {material} could not be read to preserve its textures";
+                        return false;
+                    }
+
+                    try
+                    {
+                        var materialDocument = LoadXml(materialFile);
+                        foreach (XmlNode texture in materialDocument.SelectNodes("/material/textures/texture") ?? EmptyXmlNodeList)
+                        {
+                            var path = Normalize(texture.SelectSingleNode("source")?.InnerText ?? texture.InnerText);
+                            if (path.Length != 0 && !IsTexturePlaceholder(path))
+                                protectedTextures.Add(path);
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        failure = $"external WSModel {ws} material {material} could not be read to preserve its textures ({ex.Message})";
+                        return false;
+                    }
+                }
+            }
+
+            // A direct root without an editable source VMD owner continues to load the original
+            // embedded materials. Protect every embedded path on that rigid from replacement.
+            var directConsumersCovered = directConsumers.Count != 0 && directConsumers.All(root =>
+                state.Source.ContainsFile(root) &&
+                state.GameplayMeshDependencyIndex?.GetRootsForAsset(root).All(
+                    referencedRoot => state.Source.ContainsFile(referencedRoot)) == true &&
+                directVmds.Any(vmd => vmd.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+                    state.GameplayMeshDependencyIndex.GetRootsForAsset(vmd).Contains(root, StringComparer.OrdinalIgnoreCase)));
+            if (directConsumers.Count != 0 && !directConsumersCovered)
+            {
+                var rigidFile = ResolveGameplayTraversalContainer(
+                        state.Source, GetGameplayTraversalContainers(state), rigidPath, state.ResolutionProviders)?
+                    .FindFile(rigidPath);
+                if (rigidFile == null)
+                {
+                    failure = "the original direct rigid could not be read to preserve its textures";
+                    return false;
+                }
+
+                try
+                {
+                    var rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
+                    foreach (var texture in rigid.ModelList.SelectMany(lod => lod)
+                                 .SelectMany(model => model.Material?.GetAllTextures() ?? []))
+                    {
+                        var path = Normalize(texture.Path);
+                        if (path.Length != 0 && !IsTexturePlaceholder(path))
+                            protectedTextures.Add(path);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failure = $"the original direct rigid could not be read to preserve its textures ({ex.Message})";
+                    return false;
+                }
+            }
+
+            clonePath = FindSharedRepackRigidClonePath(state, rigidPath);
+            if (clonePath == null)
+            {
+                failure = "no free output path is available for a source-owned rigid clone";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static HashSet<string> GetSharedRepackSourceDirectRigidVmds(
+            BatchState state,
+            string rigidPath)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var index = state.GameplayMeshDependencyIndex;
+            if (index == null || SharedRepackDirectRigidsDisabled)
+                return result;
+
+            var directConsumers = GetDirectGameplayRigidConsumers(state, rigidPath);
+            var candidateOwners = index.DependenciesByAssetPath
+                .Where(pair => pair.Value.Contains(rigidPath))
+                .Select(pair => pair.Key)
+                .Concat(directConsumers)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+            foreach (var ownerPath in candidateOwners)
+            {
+                var owner = Normalize(ownerPath);
+                var hasReference = directConsumers.Contains(owner) ||
+                    index.DependenciesByAssetPath.TryGetValue(owner, out var dependencies) &&
+                    dependencies.Contains(rigidPath);
+                if (!hasReference ||
+                    !Path.GetExtension(owner).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase) ||
+                    !state.Source.ContainsFile(owner) || OverridesVanillaPath(state, owner) ||
+                    state.LenientVmds.Any(entry => entry.Path.Equals(owner, StringComparison.OrdinalIgnoreCase)) ||
+                    state.Consumers?.TryBlock(owner, "repack") == true)
+                {
+                    continue;
+                }
+
+                var roots = index.GetRootsForAsset(owner).ToArray();
+                if (roots.Length == 0 || roots.Any(root => !state.Source.ContainsFile(root)))
+                    continue;
+
+                try
+                {
+                    var document = state.ModifiedVmdDocuments.TryGetValue(owner, out var modified)
+                        ? modified
+                        : LoadXml(state.Source.FindFile(owner)!);
+                    if (HasSharedRepackDirectRigidReference(document, rigidPath))
+                        result.Add(owner);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // A VMD we cannot parse stays on the original rigid.
+                }
+            }
+
+            return result;
+        }
+
+        private static bool HasSharedRepackDirectRigidReference(XmlDocument document, string rigidPath)
+            => FindSharedRepackDirectRigidReferenceNodes(document, rigidPath).Count != 0;
+
+        private static List<XmlNode> FindSharedRepackDirectRigidReferenceNodes(XmlDocument document, string rigidPath)
+        {
+            var nodes = new List<XmlNode>();
+            foreach (XmlNode node in document.SelectNodes("//*[@model]") ?? EmptyXmlNodeList)
+            {
+                if (node is XmlElement element &&
+                    Normalize(element.GetAttribute("model")).Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    nodes.Add(element);
+                }
+            }
+
+            foreach (XmlNode node in document.SelectNodes("//*[self::rigid or self::model]") ?? EmptyXmlNodeList)
+            {
+                if (Normalize(node.InnerText).Equals(rigidPath, StringComparison.OrdinalIgnoreCase) &&
+                    !nodes.Contains(node))
+                {
+                    nodes.Add(node);
+                }
+            }
+
+            return nodes;
+        }
+
+        private static void RepointSharedRepackDirectRigidReferences(
+            XmlDocument document,
+            string rigidPath,
+            string clonePath)
+        {
+            foreach (var node in FindSharedRepackDirectRigidReferenceNodes(document, rigidPath))
+            {
+                if (node is XmlElement element && element.HasAttribute("model") &&
+                    Normalize(element.GetAttribute("model")).Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    element.SetAttribute("model", clonePath);
+                }
+                else
+                {
+                    node.InnerText = clonePath;
+                }
+            }
+        }
+
+        private static string? FindSharedRepackRigidClonePath(BatchState state, string rigidPath)
+        {
+            var identity = ContentHash(Normalize(rigidPath)).ToLowerInvariant();
+            for (var salt = 0; salt < 32; salt++)
+            {
+                var suffix = salt == 0 ? string.Empty : "_" + salt;
+                var path = Normalize(
+                    $@"variantmeshes\wh_variantmodels\asset_editor\shared_texture_repack\{identity}{suffix}.rigid_model_v2");
+                if (state.Source.ContainsFile(path) || state.Output.ContainsFile(path) ||
+                    state.RigidModels.ContainsKey(path) || OverridesVanillaPath(state, path) ||
+                    ResolveGameplayTraversalContainer(
+                        state.Source, GetGameplayTraversalContainers(state), path, state.ResolutionProviders)?
+                    .FindFile(path) != null)
+                {
+                    continue;
+                }
+
+                return path;
+            }
+
+            return null;
+        }
+
         private static void BuildSharedRepackDirectRigidOutcomes(
             BatchState state,
             VanillaTextureCoverageResult coverage,
@@ -2807,11 +3170,13 @@ namespace Editors.PackOptimizer.Core
                     continue;
 
                 // Rigids the pack does not own are only counted, by reason.
-                var notOwned = !state.Source.ContainsFile(rigid)
-                    ? "not owned by the source pack"
-                    : OverridesVanillaPath(state, rigid)
-                        ? "override a vanilla path"
-                        : null;
+                var notOwned = result.EmbeddedRewrittenRigids.Contains(rigid)
+                    ? null
+                    : !state.Source.ContainsFile(rigid)
+                        ? "not owned by the source pack"
+                        : OverridesVanillaPath(state, rigid)
+                            ? "override a vanilla path"
+                            : null;
                 if (notOwned != null)
                 {
                     result.DirectRigidsNotOwned[notOwned] = result.DirectRigidsNotOwned.GetValueOrDefault(notOwned) + 1;
@@ -8502,9 +8867,72 @@ namespace Editors.PackOptimizer.Core
             var rewrites = new List<(
                 SharedRepackPart Part,
                 System.Numerics.Vector2[] Uv,
-                Dictionary<TextureType, string> EmbeddedPaths)>();
+                Dictionary<TextureType, string> EmbeddedPaths,
+                string OutputRigidPath,
+                RmvModel Model)>();
+            var outputRigidsBySource = new Dictionary<string, (string Path, RmvFile Rigid)>(StringComparer.OrdinalIgnoreCase);
+            var newClonePlans = new Dictionary<string, (
+                string Path, RmvFile Rigid, HashSet<string> WsModels, HashSet<string> Vmds,
+                HashSet<string> ProtectedTextures)>(
+                StringComparer.OrdinalIgnoreCase);
+            var vmdDocumentsToCommit = new Dictionary<string, (XmlDocument Document, VariantMesh Parsed)>(
+                StringComparer.OrdinalIgnoreCase);
             var materialFiles = new List<(string Path, byte[] Data)>();
             var materialSources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            string? cloneFailure = null;
+
+            (string Path, RmvFile Rigid)? GetOutputRigid(string sourcePath)
+            {
+                if (outputRigidsBySource.TryGetValue(sourcePath, out var cached))
+                    return cached;
+
+                if (!rigids.TryGetValue(sourcePath, out var original))
+                    return null;
+
+                if (result.ClonedRigidPathBySource.TryGetValue(sourcePath, out var existingClonePath))
+                {
+                    if (!state.RigidModels.TryGetValue(existingClonePath, out var existingClone))
+                        return null;
+                    cached = (existingClonePath, existingClone);
+                }
+                else
+                {
+                    var clonePlan = merge.Rigids.FirstOrDefault(item => item.Path.Equals(
+                        sourcePath, StringComparison.OrdinalIgnoreCase));
+                    if (clonePlan?.ClonePath is { Length: > 0 } clonePath)
+                    {
+                        try
+                        {
+                            var bytes = ModelFactory.Create().Save(
+                                original,
+                                validateByReloading: false,
+                                logProgress: false);
+                            var clone = ModelFactory.Create().Load(bytes);
+                            if (clone.ModelList == null)
+                                return null;
+                            cached = (clonePath, clone);
+                            newClonePlans[sourcePath] = (
+                                clonePath,
+                                clone,
+                                clonePlan.CloneWsModels,
+                                clonePlan.CloneVmds,
+                                clonePlan.CloneProtectedTextures);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            cloneFailure = $"{sourcePath}: could not clone the rigid ({ex.GetType().Name}: {ex.Message})";
+                            return null;
+                        }
+                    }
+                    else
+                    {
+                        cached = (sourcePath, original);
+                    }
+                }
+
+                outputRigidsBySource[sourcePath] = cached;
+                return cached;
+            }
 
             try
             {
@@ -8690,8 +9118,15 @@ namespace Editors.PackOptimizer.Core
                         {
                             // Signatures partition the textures, so the parts of two sets are
                             // disjoint; a part moved twice would be sampled with the wrong UVs.
+                            var outputRigid = GetOutputRigid(part.Key.GeometryPath);
+                            if (outputRigid == null)
+                            {
+                                failure ??= cloneFailure ?? $"{DescribeSharedRepackPart(part)} belongs to a rigid that is not rewritable";
+                                return null;
+                            }
+
                             if (!claimedParts.Add(part.Key) ||
-                                movedParts.GetValueOrDefault(part.Key.GeometryPath)?.Contains(
+                                movedParts.GetValueOrDefault(outputRigid.Value.Path)?.Contains(
                                     (part.Key.LodIndex, part.Key.PartIndex)) == true)
                             {
                                 var message = $"Shared repack would move {DescribeSharedRepackPart(part)} twice";
@@ -8700,13 +9135,18 @@ namespace Editors.PackOptimizer.Core
                                 return null;
                             }
 
-                            if (!rigids.ContainsKey(part.Key.GeometryPath))
+                            if (part.Key.LodIndex < 0 || part.Key.LodIndex >= outputRigid.Value.Rigid.ModelList.Length ||
+                                part.Key.PartIndex < 0 ||
+                                part.Key.PartIndex >= outputRigid.Value.Rigid.ModelList[part.Key.LodIndex].Length)
                             {
-                                failure = $"{DescribeSharedRepackPart(part)} belongs to a rigid that is not rewritable";
+                                failure = $"{DescribeSharedRepackPart(part)} is missing from its writable rigid";
                                 return null;
                             }
 
-                            var vertices = part.Model!.Mesh.VertexList;
+                            // Keep the mutable model local until the whole plan is ready to apply. A failed
+                            // attempt must not leave a temporary clone referenced by cached planning parts.
+                            var writableModel = outputRigid.Value.Rigid.ModelList[part.Key.LodIndex][part.Key.PartIndex];
+                            var vertices = writableModel.Mesh.VertexList;
                             var uv = new System.Numerics.Vector2[vertices.Length];
                             for (var vertex = 0; vertex < vertices.Length; vertex++)
                             {
@@ -8770,15 +9210,55 @@ namespace Editors.PackOptimizer.Core
                                     }
                                 }
 
-                                if (embeddedPaths.Keys.Any(type => part.Model!.Material?.GetTexture(type).HasValue != true))
+                                if (embeddedPaths.Keys.Any(type => writableModel.Material?.GetTexture(type).HasValue != true))
                                 {
                                     failure = $"embedded material texture disappeared before rewrite for {DescribeSharedRepackPart(part)}";
                                     return null;
                                 }
                             }
 
-                            rewrites.Add((part, uv, embeddedPaths));
+                            rewrites.Add((part, uv, embeddedPaths, outputRigid.Value.Path, writableModel));
                         }
+                    }
+                }
+
+                // Prepare copy-on-write VMD edits before the output or model state changes. A VMD
+                // shared with vanilla/another mod is never modified by this clone path.
+                foreach (var (sourcePath, clone) in newClonePlans)
+                {
+                    foreach (var vmdPath in clone.Vmds.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                    {
+                        XmlDocument document;
+                        if (vmdDocumentsToCommit.TryGetValue(vmdPath, out var pending))
+                        {
+                            document = CloneXmlDocument(pending.Document);
+                        }
+                        else if (state.ModifiedVmdDocuments.TryGetValue(vmdPath, out var modified))
+                        {
+                            document = CloneXmlDocument(modified);
+                        }
+                        else
+                        {
+                            var file = state.Source.FindFile(vmdPath);
+                            if (file == null)
+                            {
+                                failure = $"source VMD {vmdPath} is not available for rigid clone redirection";
+                                return null;
+                            }
+
+                            document = LoadXml(file);
+                        }
+
+                        if (!HasSharedRepackDirectRigidReference(document, sourcePath))
+                        {
+                            failure = $"source VMD {vmdPath} no longer references rigid {sourcePath}";
+                            return null;
+                        }
+
+                        RepointSharedRepackDirectRigidReferences(document, sourcePath, clone.Path);
+                        vmdDocumentsToCommit[vmdPath] = (
+                            document,
+                            VariantMeshDefinitionLoader.Load(document.OuterXml));
                     }
                 }
             }
@@ -8789,13 +9269,40 @@ namespace Editors.PackOptimizer.Core
                 return null;
             }
 
-            // 3. Apply: write files, rewrite UVs, repoint WSModels.
-            foreach (var path in rewrites.Select(item => item.Part.Key.GeometryPath).Distinct(StringComparer.OrdinalIgnoreCase))
+            // 3. Apply: write files, rewrite cloned/source UVs, and repoint consumers.
+            foreach (var (sourcePath, clone) in newClonePlans)
             {
-                if (!snapshots.ContainsKey(path))
-                    snapshots[path] = SnapshotSharedRepackRigid(rigids[path]);
-                if (!movedParts.ContainsKey(path))
-                    movedParts[path] = [];
+                result.ClonedRigidPathBySource[sourcePath] = clone.Path;
+                result.ClonedSourcePathByRigid[clone.Path] = sourcePath;
+                result.ClonedRigidWsModelsBySource[sourcePath] = clone.WsModels;
+                result.ClonedRigidVmdsBySource[sourcePath] = clone.Vmds;
+                result.CloneProtectedTextures.UnionWith(clone.ProtectedTextures);
+                state.RigidModels[clone.Path] = clone.Rigid;
+                foreach (var ws in clone.WsModels)
+                {
+                    var document = GetWsDocument(state, ws);
+                    var geometry = document?.SelectSingleNode("/model/geometry");
+                    if (geometry == null)
+                        throw new InvalidOperationException($"WSModel {ws} lost its geometry node before clone redirection");
+                    geometry.InnerText = clone.Path;
+                    state.ModifiedWsModels.Add(ws);
+                }
+            }
+
+            foreach (var (vmdPath, value) in vmdDocumentsToCommit)
+            {
+                state.ModifiedVmdDocuments[vmdPath] = value.Document;
+                state.VmdDocuments[vmdPath] = value.Parsed;
+            }
+
+            foreach (var (part, _, _, outputPath, _) in rewrites)
+            {
+                var sourcePath = part.Key.GeometryPath;
+                var writableRigid = outputRigidsBySource[sourcePath].Rigid;
+                if (!snapshots.ContainsKey(outputPath))
+                    snapshots[outputPath] = SnapshotSharedRepackRigid(writableRigid);
+                if (!movedParts.ContainsKey(outputPath))
+                    movedParts[outputPath] = [];
             }
 
             foreach (var page in plan.Pages)
@@ -8831,36 +9338,38 @@ namespace Editors.PackOptimizer.Core
                 result.GeneratedMaterials.Add(path);
             }
 
-            foreach (var (part, uv, _) in rewrites)
+            foreach (var (part, uv, _, outputPath, writableModel) in rewrites)
             {
-                var vertices = part.Model!.Mesh.VertexList;
+                part.Model = writableModel;
+                var vertices = writableModel.Mesh.VertexList;
                 for (var vertex = 0; vertex < vertices.Length; vertex++)
                 {
                     if (part.Used[vertex])
                         vertices[vertex].Uv = uv[vertex];
                 }
 
-                movedParts[part.Key.GeometryPath].Add((part.Key.LodIndex, part.Key.PartIndex));
+                movedParts[outputPath].Add((part.Key.LodIndex, part.Key.PartIndex));
                 state.SharedRepackParts.Add(part.Key);
             }
 
             var rewritten = rewrites
-                .GroupBy(item => item.Part.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(item => item.OutputRigidPath, StringComparer.OrdinalIgnoreCase)
                 .OrderBy(group => group.Key, StringComparer.Ordinal)
                 .Select(group => (Rigid: group.Key, Parts: group.Count()))
                 .ToList();
-            foreach (var (path, _) in rewritten)
+            foreach (var (outputPath, _) in rewritten)
             {
-                state.RigidModels[path] = rigids[path];
-                state.ModifiedRigids.Add(path);
-                result.RepackedRigids.Add(path);
+                var sourcePath = result.ClonedSourcePathByRigid.GetValueOrDefault(outputPath) ?? outputPath;
+                state.RigidModels[outputPath] = outputRigidsBySource[sourcePath].Rigid;
+                state.ModifiedRigids.Add(outputPath);
+                result.RepackedRigids.Add(sourcePath);
             }
 
-            foreach (var (part, _, embeddedPaths) in rewrites.Where(item => item.EmbeddedPaths.Count != 0))
+            foreach (var (part, _, embeddedPaths, _, writableModel) in rewrites.Where(item => item.EmbeddedPaths.Count != 0))
             {
                 foreach (var (type, path) in embeddedPaths)
                 {
-                    part.Model!.Material!.SetTexture(type, path);
+                    writableModel.Material!.SetTexture(type, path);
                     result.EmbeddedRewrittenPaths.Add((
                         part.Key.GeometryPath,
                         part.Key.LodIndex,
@@ -9090,6 +9599,47 @@ namespace Editors.PackOptimizer.Core
 
             var before = errors.Count;
             errors.AddRange(result.ValidationErrors);
+            foreach (var (sourceRigid, cloneRigid) in result.ClonedRigidPathBySource
+                         .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                if (state.Source.ContainsFile(sourceRigid))
+                    errors.Add($"External rigid clone unexpectedly has a source-owned original: {sourceRigid}");
+                if (!state.ModifiedRigids.Contains(cloneRigid) ||
+                    !state.RigidModels.TryGetValue(cloneRigid, out var clone) || clone.ModelList == null)
+                {
+                    errors.Add($"External rigid clone is not scheduled for output: {sourceRigid} -> {cloneRigid}");
+                    continue;
+                }
+                if (state.RigidModels.TryGetValue(sourceRigid, out var original) && ReferenceEquals(original, clone))
+                    errors.Add($"External rigid clone aliases its immutable original: {sourceRigid} -> {cloneRigid}");
+
+                foreach (var ws in result.ClonedRigidWsModelsBySource.GetValueOrDefault(sourceRigid) ?? [])
+                {
+                    var geometry = state.WsDocuments.GetValueOrDefault(ws)?.SelectSingleNode("/model/geometry");
+                    if (!state.ModifiedWsModels.Contains(ws) ||
+                        !Normalize(geometry?.InnerText).Equals(cloneRigid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors.Add($"Source WSModel was not redirected to external rigid clone: {ws} -> {cloneRigid}");
+                    }
+                }
+
+                foreach (var vmd in result.ClonedRigidVmdsBySource.GetValueOrDefault(sourceRigid) ?? [])
+                {
+                    if (!state.ModifiedVmdDocuments.TryGetValue(vmd, out var document) ||
+                        !HasSharedRepackDirectRigidReference(document, cloneRigid) ||
+                        HasSharedRepackDirectRigidReference(document, sourceRigid))
+                    {
+                        errors.Add($"Source VMD was not redirected to external rigid clone: {vmd} -> {cloneRigid}");
+                    }
+                }
+            }
+            foreach (var texture in result.CloneProtectedTextures
+                         .Where(state.Source.ContainsFile)
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                if (state.Output.FindFile(texture) == null)
+                    errors.Add($"Original texture needed by an immutable external consumer was removed: {texture}");
+            }
             var compactedRepackTextures = (state.TextureCompaction?.Compacted ?? [])
                 .Where(entry => entry.Generated)
                 .Select(entry => Normalize(entry.Path))
@@ -9269,11 +9819,11 @@ namespace Editors.PackOptimizer.Core
                         group => group.Key,
                         group => group.Select(binding => binding.Geometry).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                         StringComparer.OrdinalIgnoreCase);
-                // Generated cross-rigid WSModels are not in the coverage bindings: their geometry is
-                // the generated rigid named in the document.
-                foreach (var ws in state.CrossRigidGeneratedWsModelPaths)
+                // The live documents include source WSModels repointed to private rigid clones,
+                // as well as generated cross-rigid WSModels absent from the original coverage scan.
+                foreach (var (ws, document) in state.WsDocuments)
                 {
-                    var geometry = Normalize(state.WsDocuments.GetValueOrDefault(ws)?.SelectSingleNode("/model/geometry")?.InnerText);
+                    var geometry = Normalize(document.SelectSingleNode("/model/geometry")?.InnerText);
                     if (geometry.Length != 0)
                         geometryOfWs[ws] = [geometry];
                 }
@@ -9289,7 +9839,11 @@ namespace Editors.PackOptimizer.Core
                         continue;
 
                     var geometries = geometryOfWs.GetValueOrDefault(ws) ?? [];
-                    var other = geometries.FirstOrDefault(geometry => !result.RepackedRigids.Contains(geometry));
+                    bool IsRepackedGeometry(string geometry)
+                        => result.RepackedRigids.Contains(geometry) ||
+                           result.ClonedSourcePathByRigid.TryGetValue(geometry, out var sourceRigid) &&
+                           result.RepackedRigids.Contains(sourceRigid);
+                    var other = geometries.FirstOrDefault(geometry => !IsRepackedGeometry(geometry));
                     if (geometries.Count == 0 || other != null)
                     {
                         errors.Add(
@@ -9371,7 +9925,8 @@ namespace Editors.PackOptimizer.Core
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var rigidPath = rewrittenPath.Rigid;
-                var rigid = state.RigidModels.GetValueOrDefault(rigidPath);
+                var outputRigidPath = result.ClonedRigidPathBySource.GetValueOrDefault(rigidPath) ?? rigidPath;
+                var rigid = state.RigidModels.GetValueOrDefault(outputRigidPath);
                 if (rigid?.ModelList == null)
                 {
                     errors.Add($"Rewritten direct rigid is unavailable for embedded material validation: {rigidPath}");
@@ -9384,7 +9939,12 @@ namespace Editors.PackOptimizer.Core
                         entry.RigidPath.Equals(rigidPath, StringComparison.OrdinalIgnoreCase) &&
                         entry.LodIndex == rewrittenPath.Lod))
                 {
-                    var sourceFile = state.Source.FindFile(rigidPath);
+                    var sourceFile = state.Source.FindFile(rigidPath) ??
+                                     ResolveGameplayTraversalContainer(
+                                         state.Source,
+                                         GetGameplayTraversalContainers(state),
+                                         rigidPath,
+                                         state.ResolutionProviders)?.FindFile(rigidPath);
                     if (!mergeSourceRigids.TryGetValue(rigidPath, out var mergeSourceRigid) && sourceFile != null)
                     {
                         mergeSourceRigid = ModelFactory.Create().Load(sourceFile.DataSource.ReadData());
@@ -9524,14 +10084,29 @@ namespace Editors.PackOptimizer.Core
                          .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var sourceFile = state.Source.FindFile(rigidPath);
-                if (sourceFile == null)
+                var hasClone = state.SharedTextureRepack?.ClonedRigidPathBySource.ContainsKey(rigidPath) == true;
+                // Validate embedded paths only for rigids the output pack owns or this stage cloned.
+                // An untouched external direct rigid remains in its loaded pack, so requiring it in
+                // the output would be a false missing-asset error.
+                if (!state.Source.ContainsFile(rigidPath) && !hasClone)
+                    continue;
+
+                var sourceFile = state.Source.FindFile(rigidPath) ??
+                                 ResolveGameplayTraversalContainer(
+                                     state.Source,
+                                     containers,
+                                     rigidPath,
+                                     state.ResolutionProviders)?.FindFile(rigidPath);
+                if (sourceFile == null && !hasClone)
                     continue;
 
                 RmvFile sourceRigid;
                 try
                 {
-                    sourceRigid = ModelFactory.Create().Load(sourceFile.DataSource.ReadData());
+                    sourceRigid = sourceFile != null
+                        ? ModelFactory.Create().Load(sourceFile.DataSource.ReadData())
+                        : state.RigidModels.GetValueOrDefault(rigidPath) ??
+                          throw new InvalidDataException("the original rigid was not loaded");
                 }
                 catch (Exception ex)
                 {
@@ -9571,15 +10146,17 @@ namespace Editors.PackOptimizer.Core
             var sourceResolvedSlots = new HashSet<(string Rigid, int Lod, int Part, TextureType Type)>();
             foreach (var (rigidPath, sourceRigid) in sourceRigids)
             {
-                var outputFile = state.Output.FindFile(rigidPath);
-                if (outputFile == null)
+                var outputRigidPath = state.SharedTextureRepack?.ClonedRigidPathBySource.GetValueOrDefault(rigidPath) ??
+                                      rigidPath;
+                var outputFile = state.Output.FindFile(outputRigidPath);
+                var inMemoryOutputRigid = state.RigidModels.GetValueOrDefault(outputRigidPath);
+                if (outputFile == null && inMemoryOutputRigid == null)
                     continue;
 
                 RmvFile outputRigid;
                 try
                 {
-                    outputRigid = state.RigidModels.GetValueOrDefault(rigidPath) ??
-                                  ModelFactory.Create().Load(outputFile.DataSource.ReadData());
+                    outputRigid = inMemoryOutputRigid ?? ModelFactory.Create().Load(outputFile!.DataSource.ReadData());
                     outputRigids[rigidPath] = outputRigid;
                 }
                 catch (Exception ex)
@@ -10644,10 +11221,11 @@ namespace Editors.PackOptimizer.Core
             }
 
             sb.AppendLine(
-                "Mode: REWRITES the pack. For each selected signature set whose users are all mod-owned rigids, new " +
-                "smaller textures hold only the regions its parts use (same texel density, no downscaling), the " +
-                "UVs of every rigid using them are rewritten for all LODs, new materials are written and the " +
-                "rigids' WSModels repointed. A rigid that cannot be rewritten only loses its parts: their textures " +
+                "Mode: REWRITES the pack. For each selected signature set with a safe rewrite closure, new smaller " +
+                "textures hold only the regions its parts use (same texel density, no downscaling). Source-owned " +
+                "consumers are redirected, and an eligible external rigid is rewritten through a private clone so " +
+                "other packs keep using the original. New materials are written and WSModels repointed. A rigid " +
+                "that cannot be rewritten only loses its parts: their textures " +
                 "leave the set. A texture of any size that is one flat colour is kept as authored and never blocks " +
                 "a part. A material whose textures belong to different signature sets pulls the other sets into " +
                 "one plan (never a set that was already processed); a plan is written completely or not at all, " +
@@ -10931,7 +11509,7 @@ namespace Editors.PackOptimizer.Core
             if (result.DirectRigidOutcomes.Count != 0 || result.DirectRigidsNotOwned.Count != 0)
             {
                 sb.AppendLine(
-                    "Directly loaded rigid outcomes (source-owned rigids whose embedded modern textures enter a considered signature set):");
+                    "Directly loaded rigid outcomes (rigids whose embedded modern textures enter a considered signature set):");
                 foreach (var direct in result.DirectRigidOutcomes.OrderBy(item => item.Rigid, StringComparer.OrdinalIgnoreCase))
                 {
                     var setsText = direct.Bucket == "not rewritten" ? string.Empty : $"sets: {string.Join(" | ", direct.Sets)}; ";
@@ -10946,11 +11524,14 @@ namespace Editors.PackOptimizer.Core
 
             long before = result.BuiltSets.Sum(set => set.Before);
             long after = result.BuiltSets.Sum(set => set.After);
+            var clonedExternalRigids = result.ClonedSourcePathByRigid.Count(pair =>
+                result.RepackedRigids.Contains(pair.Value));
             sb.AppendLine(
                 $"Built sets: {result.Built:N0}; replaced texture bytes {before:N0} -> new {after:N0} " +
                 $"(actual saving {FormatSignedBytes(before - after)} bytes); {result.GeneratedTextures.Count:N0} " +
                 $"texture(s) and {result.GeneratedMaterials.Count:N0} material(s) generated; " +
-                $"{result.RepackedRigids.Count:N0} rigid(s) rewritten. Of those, " +
+                $"{result.RepackedRigids.Count:N0} rigid(s) rewritten, including {clonedExternalRigids:N0} private " +
+                $"clone(s) of external rigids. Of those, " +
                 $"{result.RepackedRigids.Count(path => state.CrossRigidGeneratedRigidPaths.Contains(path)):N0} are generated " +
                 $"cross-rigid models and {result.RepackedRigids.Count(path => state.CrossRigidChangedRigids.Contains(path)):N0} " +
                 $"are source rigids cross-rigid merging relied on.");

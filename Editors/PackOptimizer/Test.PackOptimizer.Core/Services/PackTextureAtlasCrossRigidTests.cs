@@ -8342,7 +8342,8 @@ namespace Test.PackOptimizer.Core
                 long minimumSaving = 100_000,
                 bool analyse = true,
                 long minimumGroupSaving = 10_000,
-                int maximumSide = 4096)
+                int maximumSide = 4096,
+                bool usePackLoader = false)
             {
                 if (analyse)
                     Analyse();
@@ -8354,7 +8355,9 @@ namespace Test.PackOptimizer.Core
                             State,
                             CancellationToken.None,
                             null,
-                            (Func<string, RmvFile?>)(path => Rigids.TryGetValue(path, out var factory) ? factory() : null),
+                            usePackLoader
+                                ? null
+                                : (Func<string, RmvFile?>)(path => Rigids.TryGetValue(path, out var factory) ? factory() : null),
                             (long?)minimumSaving,
                             (long?)minimumGroupSaving,
                             (int?)maximumSide,
@@ -10058,12 +10061,12 @@ namespace Test.PackOptimizer.Core
 
             var report = BuildSharedRepackSection(world.State);
 
-            Assert.That(report, Does.Contain("whose users are all mod-owned rigids"));
+            Assert.That(report, Does.Contain("with a safe rewrite closure"));
             Assert.That(report, Does.Not.Contain("Not confined to exactly one rigid"));
             Assert.That(report, Does.Contain("2 rigid(s) rewritten: " + $"{SrRigid} (4 part(s)), {SrRigid2} (2 part(s))"));
             Assert.That(report, Does.Contain("Built: 1"));
             Assert.That(report, Does.Contain("(reconciles)"));
-            Assert.That(report, Does.Contain("2 rigid(s) rewritten."));
+            Assert.That(report, Does.Contain("2 rigid(s) rewritten, including 0 private clone(s)"));
         }
 
         [Test]
@@ -10080,6 +10083,122 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<int>(result, "RigidNotEligible"), Is.EqualTo(1), SrSkips(result));
             Assert.That(SrSkips(result), Does.Contain("not owned by the source pack"));
             AssertFunnelReconciles(result);
+        }
+
+        [Test]
+        public void SharedRepack_VanillaRigid_ResolvesFromLoadedPack_ClonesAndRedirectsOwnedConsumers()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: true);
+            SrInstallReadableSourceRigid(world);
+            var vanillaRigidBytes = world.Fixture.Source[SrRigid];
+            var protectedTextures = new[]
+            {
+                "textures\\sr_direct_base.dds",
+                "textures\\sr_direct_normal.dds",
+                "textures\\sr_direct_mask.dds",
+                "textures\\sr_direct_material_map.dds",
+            };
+            foreach (var texture in protectedTextures)
+            {
+                world.Fixture.Add(texture, world.Fixture.Vanilla[texture]);
+                world.Fixture.Vanilla.Remove(texture);
+            }
+            world.Fixture.Source.Remove(SrRigid);
+            world.Fixture.Output.Remove(SrRigid);
+            world.Fixture.Vanilla[SrRigid] = vanillaRigidBytes;
+
+            const string externalWs = @"variantmeshes\external\keep_original.wsmodel";
+            world.Fixture.Vanilla[externalWs] = Encoding.UTF8.GetBytes(
+                CreateWsModelDocument(SrRigid, [[SrMaterialPath("direct")]]).OuterXml);
+            world.Analyse();
+            var index = Get<object>(world.State, "GameplayMeshDependencyIndex");
+            index.GetType().GetMethod("AddWsModelConsumer")!.Invoke(index, [SrRigid, externalWs]);
+            index.GetType().GetMethod("AddRootReference")!.Invoke(index, [SrRoot, SrRoot]);
+            Get<IDictionary>(world.State, "RigidModels").Remove(SrRigid);
+
+            var result = world.Run(analyse: false, minimumSaving: 1, minimumGroupSaving: 1, usePackLoader: true);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var clonePath = Get<Dictionary<string, string>>(result, "ClonedRigidPathBySource")[SrRigid];
+            var original = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            var originalUvs = original.ModelList.SelectMany(lod => lod)
+                .SelectMany(model => model.Mesh.VertexList.Select(vertex => vertex.Uv)).ToArray();
+            var clone = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[clonePath]!;
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.EquivalentTo([clonePath]));
+            Assert.That(clone, Is.Not.SameAs(original));
+            Assert.That(Get<IDictionary>(world.State, "RigidModels")[SrRigid], Is.SameAs(original));
+            Assert.That(
+                original.ModelList.SelectMany(lod => lod)
+                    .SelectMany(model => model.Mesh.VertexList.Select(vertex => vertex.Uv)),
+                Is.EqualTo(originalUvs));
+            Assert.That(
+                original.ModelList[0][0].Material!.GetTexture(TextureType.BaseColour)!.Value.Path,
+                Is.EqualTo("textures\\sr_direct_base.dds"));
+            Assert.That(
+                ((XmlDocument)Get<IDictionary>(world.State, "WsDocuments")[SrWs]!)
+                    .SelectSingleNode("/model/geometry")!.InnerText,
+                Is.EqualTo(clonePath));
+            var sourceVmd = Get<Dictionary<string, XmlDocument>>(world.State, "ModifiedVmdDocuments")[SrRoot];
+            Assert.That(sourceVmd.OuterXml, Does.Contain(clonePath).And.Not.Contain(SrRigid));
+            var externalWsDocument = new XmlDocument();
+            externalWsDocument.LoadXml(Encoding.UTF8.GetString(world.Fixture.Vanilla[externalWs]));
+            Assert.That(
+                externalWsDocument.SelectSingleNode("/model/geometry")!.InnerText,
+                Is.EqualTo(SrRigid));
+            Assert.That(Get<HashSet<string>>(result, "CloneProtectedTextures"), Is.SupersetOf(protectedTextures));
+            Assert.That(world.Fixture.Output, Does.Not.ContainKey(SrRigid));
+            GetServiceType().GetMethod("SaveModifiedDocuments", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(world.Service, [world.State, CancellationToken.None, null]);
+            Assert.That(world.Fixture.Output, Does.ContainKey(clonePath));
+            Assert.That(world.Fixture.Output, Does.Not.ContainKey(SrRigid));
+            var savedVmd = new XmlDocument();
+            savedVmd.LoadXml(Encoding.UTF8.GetString(world.Fixture.Output[SrRoot]));
+            Assert.That(savedVmd.OuterXml, Does.Contain(clonePath).And.Not.Contain(SrRigid));
+
+            // Only tracked private clones are allowed as new RMV paths; an unrelated addition remains an error.
+            var expectedAddedRigids = (HashSet<string>)GetStaticMethod("GetExpectedAddedRigidPathsForValidation")
+                .Invoke(null, [world.State])!;
+            Assert.That(expectedAddedRigids, Does.Contain(clonePath));
+            var validateRigidPaths = GetServiceType().GetMethod(
+                "ValidateUnchangedModelPathSet", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var pathErrors = new List<string>();
+            validateRigidPaths.Invoke(null, [world.State, ".rigid_model_v2", pathErrors, expectedAddedRigids]);
+            Assert.That(pathErrors, Is.Empty);
+            const string unexpectedRigid = @"variantmeshes\wh_main\unexpected.rigid_model_v2";
+            world.Fixture.Output[unexpectedRigid] = [0];
+            validateRigidPaths.Invoke(null, [world.State, ".rigid_model_v2", pathErrors, expectedAddedRigids]);
+            Assert.That(pathErrors, Has.Some.Contain("Unexpected new .rigid_model_v2 path").And.Contain(unexpectedRigid));
+            world.Fixture.Output.Remove(unexpectedRigid);
+
+            var prune = GetServiceType().GetMethod("PruneUnusedAssetFiles", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var currentReachable = world.Fixture.Output.Keys
+                .Except(protectedTextures, StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            prune.Invoke(world.Service,
+            [
+                world.State,
+                new HashSet<string>(protectedTextures, StringComparer.OrdinalIgnoreCase),
+                currentReachable,
+                CancellationToken.None,
+                null,
+            ]);
+            foreach (var texture in protectedTextures)
+                Assert.That(world.Fixture.Output, Does.ContainKey(texture), texture);
+
+            // An external direct rigid with no private clone stays in its loaded pack and is not expected in output.
+            const string untouchedExternalRigid = @"variantmeshes\wh_main\untouched_external.rigid_model_v2";
+            const string untouchedExternalVmd = @"variantmeshes\variantmeshdefinitions\untouched_external.variantmeshdefinition";
+            world.Fixture.Vanilla[untouchedExternalRigid] = vanillaRigidBytes;
+            world.Fixture.Vanilla[untouchedExternalVmd] = Encoding.UTF8.GetBytes(
+                $"<VARIANT_MESH><rigid>{untouchedExternalRigid}</rigid></VARIANT_MESH>");
+            var dependencyIndex = Get<object>(world.State, "GameplayMeshDependencyIndex");
+            var consumerKind = Enum.Parse(GetNestedType("GameplayMeshDependencyRootKind"), "ConsumerPackAsset");
+            dependencyIndex.GetType().GetMethod("RegisterRoot")!.Invoke(dependencyIndex, [untouchedExternalVmd, consumerKind]);
+            dependencyIndex.GetType().GetMethod("AddDirectConsumer")!.Invoke(
+                dependencyIndex, [untouchedExternalRigid, untouchedExternalVmd]);
+            Assert.That(world.Fixture.Output, Does.Not.ContainKey(untouchedExternalRigid));
+            Assert.That(SrValidateDirectRigidEmbeddedTextures(world), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
         }
 
         [Test]
