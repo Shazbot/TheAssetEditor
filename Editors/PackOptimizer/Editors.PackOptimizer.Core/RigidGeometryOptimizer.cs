@@ -77,9 +77,17 @@ namespace Editors.PackOptimizer.Core
                     remappedIndices,
                     vertexPositions);
 
-            var (reorderedVertices, reorderedIndices) = ReorderVerticesByFirstUse(
-                deduplicatedVertices,
-                cacheAndOverdrawOptimizedIndices);
+            var vertexFetchResult = MeshOptTriangleOrderOptimizer.OptimizeVertexFetch(
+                cacheAndOverdrawOptimizedIndices,
+                deduplicatedVertices.Count);
+            var reorderedVertices = new CommonVertex[vertexFetchResult.SourceVertexIndices.Length];
+            for (var vertexIndex = 0; vertexIndex < reorderedVertices.Length; vertexIndex++)
+            {
+                var sourceVertexIndex = vertexFetchResult.SourceVertexIndices[vertexIndex];
+                reorderedVertices[vertexIndex] = deduplicatedVertices[sourceVertexIndex];
+            }
+
+            var reorderedIndices = vertexFetchResult.Indices;
 
             if (reorderedIndices.Length != indicesBefore)
             {
@@ -97,36 +105,6 @@ namespace Editors.PackOptimizer.Core
                 reorderedIndices.Length,
                 duplicateVerticesRemoved,
                 unreferencedVerticesRemoved);
-        }
-
-        private static (CommonVertex[] Vertices, ushort[] Indices) ReorderVerticesByFirstUse(
-            IReadOnlyList<CommonVertex> vertices,
-            IReadOnlyList<ushort> indices)
-        {
-            var remap = new Dictionary<ushort, ushort>();
-            var outputVertices = new List<CommonVertex>(vertices.Count);
-            var outputIndices = new ushort[indices.Count];
-
-            for (var i = 0; i < indices.Count; i++)
-            {
-                var oldIndex = indices[i];
-                if (!remap.TryGetValue(oldIndex, out var newIndex))
-                {
-                    if (oldIndex >= vertices.Count)
-                        throw new InvalidOperationException($"Mesh contains invalid vertex index {oldIndex}.");
-
-                    if (outputVertices.Count > ushort.MaxValue)
-                        throw new InvalidOperationException("Optimized mesh exceeds the 16-bit vertex index limit.");
-
-                    newIndex = checked((ushort)outputVertices.Count);
-                    remap.Add(oldIndex, newIndex);
-                    outputVertices.Add(vertices[oldIndex]);
-                }
-
-                outputIndices[i] = newIndex;
-            }
-
-            return (outputVertices.ToArray(), outputIndices);
         }
 
         private sealed class CommonVertexComparer : IEqualityComparer<CommonVertex>

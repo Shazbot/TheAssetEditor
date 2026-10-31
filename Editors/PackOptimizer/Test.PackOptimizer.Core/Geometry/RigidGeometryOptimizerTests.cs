@@ -192,6 +192,62 @@ namespace Test.PackOptimizer.Core
                 MeshOptTriangleOrderOptimizer.OptimizeVertexCacheAndOverdraw(indices, positions));
         }
 
+        [Test]
+        public void NativeVertexFetch_ReturnsFirstUsePermutationAndDropsUnusedVertices()
+        {
+            ushort[] indices = [3, 1, 2, 3, 2, 1];
+            var originalIndices = (ushort[])indices.Clone();
+
+            var result = MeshOptTriangleOrderOptimizer.OptimizeVertexFetch(indices, vertexCount: 5);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.SourceVertexIndices, Is.EqualTo(new[] { 3, 1, 2 }));
+                Assert.That(result.Indices, Is.EqualTo(new ushort[] { 0, 1, 2, 0, 2, 1 }));
+                Assert.That(indices, Is.EqualTo(originalIndices));
+            });
+        }
+
+        [Test]
+        public void NativeVertexFetch_ReturnsNoVerticesForAnEmptyIndexBuffer()
+        {
+            var result = MeshOptTriangleOrderOptimizer.OptimizeVertexFetch([], vertexCount: 8);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Indices, Is.Empty);
+                Assert.That(result.SourceVertexIndices, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void NativeVertexFetch_HandlesTheFullUshortIndexRange()
+        {
+            ushort[] indices = [ushort.MaxValue, 0, 32768];
+
+            var result = MeshOptTriangleOrderOptimizer.OptimizeVertexFetch(indices, vertexCount: ushort.MaxValue + 1);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.SourceVertexIndices, Is.EqualTo(new[] { (int)ushort.MaxValue, 0, 32768 }));
+                Assert.That(result.Indices, Is.EqualTo(new ushort[] { 0, 1, 2 }));
+            });
+        }
+
+        [Test]
+        public void NativeVertexFetch_RejectsMalformedAndOutOfRangeIndices()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.Throws<ArgumentException>(() =>
+                    MeshOptTriangleOrderOptimizer.OptimizeVertexFetch([0, 1], vertexCount: 3));
+                Assert.Throws<ArgumentException>(() =>
+                    MeshOptTriangleOrderOptimizer.OptimizeVertexFetch([0, 1, 3], vertexCount: 3));
+                Assert.Throws<ArgumentOutOfRangeException>(() =>
+                    MeshOptTriangleOrderOptimizer.OptimizeVertexFetch([], vertexCount: ushort.MaxValue + 2));
+            });
+        }
+
         private static RmvModel CreateModel(CommonVertex[] vertices, ushort[] indices)
             => new()
             {

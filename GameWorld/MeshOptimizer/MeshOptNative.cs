@@ -86,6 +86,16 @@ internal static partial class MeshOptNative
         nuint vertexPositionsStride,
         float threshold);
 
+    [LibraryImport(LibraryName, EntryPoint = "meshopt_optimizeVertexFetch")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static unsafe partial nuint OptimizeVertexFetch(
+        void* destination,
+        uint* indices,
+        nuint indexCount,
+        void* vertices,
+        nuint vertexCount,
+        nuint vertexSize);
+
     [LibraryImport(LibraryName, EntryPoint = "meshopt_optimizeVertexFetchRemap")]
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static unsafe partial nuint OptimizeVertexFetchRemap(uint* destination, uint* indices, nuint indexCount, nuint vertexCount);

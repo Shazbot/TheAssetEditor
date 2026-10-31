@@ -133,3 +133,29 @@ to obtain the new version's deterministic hash, then rerun after adding the
 version-38 entry; historical entries were preserved.
 
 Output version 38 pins golden hash `16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B`; historical version entries 1–37 are unchanged.
+
+## Native vertex-fetch follow-up (2026-10-31)
+
+Tested the actual `meshopt_optimizeVertexFetch` entrypoint after the native cache and overdraw passes, replacing the existing managed first-use vertex reorder. The overdraw threshold remains 1.05. The native function reorders an opaque uint vertex-ID stream; the resulting permutation is applied to entire managed CommonVertex records, preserving every attribute. It does not pin managed vertex objects or duplicate the existing reorder.
+
+**Result: identical mesh output, faster preprocessing for this step.** All vertex-reference sequences and ushort index buffers matched both the managed implementation and the saved output buffers. Estimated GPU vertex-fetch traffic was unchanged. There is no additional rendering-quality, cache, overdraw or fetch-traffic improvement over the existing first-use layout.
+
+| Pack | Rigids / mesh parts | Managed fetch step | Native fetch step | Speedup, this step | Managed allocation | Native allocation |
+|---|---:|---:|---:|---:|---:|---:|
+| TEB | 164 / 2,428 | 437.299 ms | 97.426 ms | 4.49× | 146.97 MiB | 93.31 MiB |
+| Albion | 55 / 902 | 361.099 ms | 75.867 ms | 4.76× | 123.20 MiB | 79.23 MiB |
+
+Allocation dropped by 36.51% on TEB and 35.69% on Albion for this step. These timings are one isolated timed pass per implementation per pack, after a small synthetic warm-up and with model loading, input preparation, correctness checks and analyzer calls outside the timer. They do not measure whole-pack runtime or in-game GPU performance. The probe retains the baseline result arrays while measuring the candidate; system/GC effects and the single-sample design limit the precision of the timing comparison.
+
+| Pack | Estimated fetched bytes, both layouts | Vertex-buffer bytes | Overfetch ratio, both layouts |
+|---|---:|---:|---:|
+| TEB | 76,231,040 | 76,127,900 | 1.001354825 |
+| Albion | 58,046,720 | 56,899,040 | 1.020170463 |
+
+The comparison reused the saved cache+overdraw experiment packs and their exact 164-rigid TEB / 55-rigid Albion inventories. Every selected model was parsed with the existing application loader and rigid parser. The probe reversed vertex storage and adjusted the input indices without changing triangles, giving each implementation a nonidentity permutation to perform while preserving the post-overdraw triangle sequence. It then compared the two results and the original saved buffers. This covered all 3,330 mesh parts and found zero mismatches. `meshopt_analyzeVertexFetch` used each model’s actual serialized vertex stride.
+
+No full Optimize Pack benchmarks were repeated and no new packs were generated: the fetch-stage buffers are identical to the existing output. Earlier pack-validation diagnostics and rendering limits remain as recorded above.
+
+On `feature/wh3-asset-host`, **13 focused Release checks passed**: the existing topology/attribute tests, new native-fetch permutation, unused-vertex, immutable-input, empty-buffer, full-16-bit-range and invalid-buffer cases, plus the unchanged golden-output test. Output version **38** and its pinned hash remain unchanged because output was preserved. The native fetch replacement is adopted for its lower preprocessing time and allocation, while preserving the existing mesh output.
+
+Local probe source, per-part results and inventories are under `K:\projects\assedfork\.codex-meshopt\fetch-probe\` and `...\fetch-results\`; test/build/experiment logs are copied into the latter directory.
