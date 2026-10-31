@@ -901,7 +901,7 @@ Rejected, do not retry without a new reason:
 
 Related, same round: the opt-in opaque alpha-shader switch (OutputVersion 33) gives GPU time only. Every switched texture had alpha exactly 255, so compaction had already made it BC1 before the switch; no bytes are saved.
 
-## 2026-10-31: LOD3-only simplifier settings (none adopted yet)
+## 2026-10-31: LOD3-only simplifier settings (bone x0.5 adopted, OutputVersion 37)
 
 Goal: less LOD3 geometry. All runs on the v36 code with the skinning/shape report (`--editor-lod-skinning-report true`), TEB and Albion workshop sources, LOD1/2 unchanged. New bench-only tokens for `--editor-lod-levels`: `boneN` (per-level factor on `EditorLodBoneWeight`, default 1) and `prunemaxN` (prune guard, below). Prune no longer runs in the hard cap's re-runs (2x error): pruning only happens in the first pass (default output unchanged, prune is off).
 
@@ -918,7 +918,7 @@ Goal: less LOD3 geometry. All runs on the v36 code with the skinning/shape repor
 
 - **LOD3 sits at the hard triangle cap**, so attribute and bone weights change which triangles survive, not how many. attr0.25 is slightly worse everywhere and moves UVs (Albion repack -0.5 MB): rejected.
 - **clamped does nothing** (as on 2026-10-28): about 100 fewer LOD3 triangles, and nothing on top of bone x0.5. Rejected.
-- **bone x0.5 is a quality option**: shape error -6 % (TEB) / -13 % (Albion), vanished LOD0 triangles -14 % / -19 %, skinning +3 % / 0 %; LOD3 bytes +0.5 % / +0.8 %. bone x0 costs +24 % / +32 % skinning: rejected. Not adopted pending the user's decision and an in-game look.
+- **bone x0.5 is a quality option**: shape error -6 % (TEB) / -13 % (Albion), vanished LOD0 triangles -14 % / -19 %, skinning +3 % / 0 %; LOD3 bytes +0.5 % / +0.8 %. **Adopted as the default (OutputVersion 37)** by the user's decision; baselines teb-v37 / albion-v37, whose output files equal the bone x0.5 runs. Still to do: an in-game look at far soldiers. WHMM `pack validate` against v36 flags "regressed" only because cross-rigid files (named by a geometry hash) were renamed: 6,048 missing-vanilla-texture warnings moved to new paths, every per-code count unchanged. bone x0 costs +24 % / +32 % skinning: rejected.
 - **Prune's geometry cut is deleted pieces.** Every pass: `teb_paymaster_wagon` 484-tri piece (0.45 m), `ak_lucy_steed` 496/420-tri pieces (0.65 m), `vir_forsaken_torso_02/_03` 1,796-tri piece. First pass only: the wagon piece and 230-350-tri torso pieces still go. With the size guard (a pruned part is redone without prune when a removed piece's diagonal exceeds the share of the part's LOD0 diagonal; 125 / 66 parts redone on TEB at 0.05 / 0.1) every large piece survives and the cut is gone (TEB -49 tris vs bone x0.5 alone). Prune stays off; the first-pass rule and the guard stay as its safety net.
 - Repack sets and savings are unchanged in every run. Albion's pack size moves by 1-4 MB between runs because the changed LOD3 geometry changes which cross-rigid payloads are picked.
 

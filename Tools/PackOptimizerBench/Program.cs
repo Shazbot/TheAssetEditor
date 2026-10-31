@@ -17,7 +17,7 @@ using Shared.Core.Settings;
 // Headless runner for PackOptimizer.Run, for measuring the batch tool's runtime
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
-//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:cap2] [--army-scope culture|subculture] [--sibling-scope model|pack]
+//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:bone0.5:cap2] [--army-scope culture|subculture] [--sibling-scope model|pack]
 //                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--lod-weights w0,w1,w2,w3] [--xr-joint-cap N]
 //                      [--repack-min-set-kib N] [--repack-min-group-kib N]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
@@ -240,7 +240,7 @@ internal static class Program
                 EditorLodUpdateNearestWeights = options.GetValueOrDefault("editor-lod-update-nearest", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
                 EditorLodJointPriority = options.GetValueOrDefault("editor-lod-joint-priority", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
                 EditorLodReportSkinningError = options.GetValueOrDefault("editor-lod-skinning-report", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
-                // --editor-lod-levels "0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:cap2" (LOD1, LOD2, LOD3 and deeper; the default)
+                // --editor-lod-levels "0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:bone0.5:cap2" (LOD1, LOD2, LOD3 and deeper; the default)
                 EditorLodSettings = options.TryGetValue("editor-lod-levels", out var editorLodLevels)
                     ? EditorLodLevelSettings.Parse(editorLodLevels)
                     : EditorLodLevelSettings.Default,

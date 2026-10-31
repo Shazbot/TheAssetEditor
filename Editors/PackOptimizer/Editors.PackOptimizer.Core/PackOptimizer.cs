@@ -68,7 +68,9 @@ namespace Editors.PackOptimizer.Core
         [
             new(0.02f, true),
             new(0.04f, true, HardTriangleCap: true, CapErrorScale: 2f),
-            new(0.08f, false, EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f),
+            // LOD3+: half the bone weight (since output 37): shape error -6 % (TEB) / -13 % (Albion) for +3 % / 0 %
+            // skinning error (CROSS_RIGID_FINDINGS.md, 2026-10-31).
+            new(0.08f, false, EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f, BoneWeightScale: 0.5f),
         ];
 
         /// <summary>The settings of LOD <paramref name="lodIndex"/> (1-based); levels past the table use its last entry.</summary>
@@ -294,7 +296,7 @@ namespace Editors.PackOptimizer.Core
         /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
         /// stages next to this number, so changing the output without bumping the version fails the test.
         /// </summary>
-        public const int OutputVersion = 36;
+        public const int OutputVersion = 37;
 
         /// <summary>
         /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format

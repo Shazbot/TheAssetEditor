@@ -18356,8 +18356,8 @@ namespace Test.PackOptimizer.Core
             {
                 Assert.That(settings(table, 1), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.02f, true)));
                 Assert.That(settings(table, 2), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.04f, true, HardTriangleCap: true, CapErrorScale: 2f)));
-                Assert.That(settings(table, 3), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f)));
-                Assert.That(settings(table, 5), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f)));
+                Assert.That(settings(table, 3), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f, BoneWeightScale: 0.5f)));
+                Assert.That(settings(table, 5), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f, BoneWeightScale: 0.5f)));
                 Assert.That(
                     Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.08:free"),
                     Is.EqualTo(new[]
@@ -18647,7 +18647,7 @@ namespace Test.PackOptimizer.Core
 
                 // Attribute scale first, flags second, and the old two-part syntax.
                 Assert.That(parse("0.08:free:attr2:clamped")[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.ErrorClamped, 2f)));
-                Assert.That(parse("0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:cap2"), Is.EqualTo(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default));
+                Assert.That(parse("0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:bone0.5:cap2"), Is.EqualTo(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default));
                 Assert.That(parse("0.08:free:cap:attr0.5:nocap")[0].HardTriangleCap, Is.False);
                 Assert.That(parse("0.08:free:cap4")[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(
                     0.08f, false, HardTriangleCap: true, CapErrorScale: 4f)));
@@ -18934,7 +18934,7 @@ namespace Test.PackOptimizer.Core
                 Assert.That(parsed[1].BoneWeightScale, Is.EqualTo(0.25f));
                 Assert.That(parsed[1].AttributeScale, Is.EqualTo(0.5f));
                 Assert.That(parsed[1].CapErrorScale, Is.EqualTo(2f));
-                Assert.That(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default.All(x => x.BoneWeightScale == 1f), Is.True);
+                Assert.That(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default.Select(x => x.BoneWeightScale), Is.EqualTo(new[] { 1f, 1f, 0.5f }));
                 Assert.Throws<ArgumentException>(() => Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.08:free:bone-1"));
                 var pruned = Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.04:locked,0.08:free:clamped+prune:prunemax0.1:cap2");
                 Assert.That(pruned[2].PruneMaxPieceSize, Is.EqualTo(0.1f));
@@ -19089,6 +19089,9 @@ namespace Test.PackOptimizer.Core
             // 36: the shared texture repack builds sets and layout groups saving at least 128 KiB (was 1 MiB per
             // set, 512 KiB per group); the repack is not among the pinned stages, so the hash is unchanged.
             [36] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
+            // 37: editor-LOD level 3 and deeper rebuild with half the bone weight. The editor-LOD fixture has no skinned
+            // LOD3 part, so the hash is unchanged.
+            [37] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
         };
 
         private static string ComputeOutputGoldenHash()
