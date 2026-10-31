@@ -54,10 +54,16 @@ namespace Editors.PackOptimizer.Core
             public VanillaCoverageTexture(string path)
             {
                 Path = path;
+                HeaderOutcome = new TextureDownscaleFile(
+                    path,
+                    null,
+                    "header not assessed",
+                    TextureHeaderOutcomeKind.Unassessed);
             }
 
             public string Path { get; }
             public DdsLayout? Layout { get; set; }
+            public TextureDownscaleFile HeaderOutcome { get; set; }
             // Owned by the source pack (otherwise vanilla). Owned textures are measured for
             // the per-unit repack estimate only; the coverage section lists vanilla ones.
             public bool IsOwned { get; set; }
@@ -173,7 +179,7 @@ namespace Editors.PackOptimizer.Core
             public long TrianglesMarked { get; set; }
             public int DegenerateTriangles { get; set; }
 
-            // The split of the referenced textures; the five counts below sum to
+            // The split of the referenced textures; these counts sum to
             // TexturesReferenced.
             // Kept for the per-unit repack estimate (shared collection, nothing read twice).
             public List<SourceWsModelBinding> Bindings { get; set; } = [];
@@ -197,8 +203,12 @@ namespace Editors.PackOptimizer.Core
             public int TexturesReferenced { get; set; }
             public int OwnedBySourcePack { get; set; }
             public int NotFound { get; set; }
+            public int ProvidedByEnabledMods { get; set; }
             public int HeaderUnreadable { get; set; }
             public int NotReached { get; set; }
+            public HashSet<string> MissingPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string> ProvidedByEnabledModPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public List<VanillaCoverageTexture> Assessed { get; } = [];
 
             public IEnumerable<VanillaCoverageTexture> Croppable
@@ -905,27 +915,79 @@ namespace Editors.PackOptimizer.Core
             // serves both the coverage section and the per-unit repack estimate.
             var repackTargets = new Dictionary<string, VanillaCoverageTexture>(
                 StringComparer.OrdinalIgnoreCase);
+            var enabledConsumerProviderCache = new Dictionary<string, string?>(
+                StringComparer.OrdinalIgnoreCase);
+            string? EnabledConsumerProvidersFor(string path)
+            {
+                if (enabledConsumerProviderCache.TryGetValue(path, out var cached))
+                    return cached;
+
+                var providers = state.Consumers?.Packs
+                    .Where(pack => pack.Files.ContainsKey(path))
+                    .Select(pack => pack.Name)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .ToList() ?? [];
+                var names = providers.Count == 0 ? null : string.Join(", ", providers);
+                enabledConsumerProviderCache[path] = names;
+                return names;
+            }
+
             foreach (var entry in textureEntries.Values
                          .OrderBy(entry => entry.Path, StringComparer.OrdinalIgnoreCase))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var container = ResolveGameplayTraversalContainer(
                     state.Source, containers, entry.Path, state.ResolutionProviders);
-                var file = container?.FindFile(entry.Path);
-                if (container == null || file == null)
+                if (container == null)
                 {
-                    result.NotFound++;
+                    var missing = ReadTextureDownscaleHeader(entry.Path, null);
+                    if (EnabledConsumerProvidersFor(entry.Path) is { } consumerProviders)
+                    {
+                        entry.HeaderOutcome = missing with
+                        {
+                            Problem = "present in enabled consumer pack(s) " + consumerProviders +
+                                      ", which are not generic texture providers",
+                            Outcome = TextureHeaderOutcomeKind.ProvidedByEnabledConsumer,
+                        };
+                        result.ProvidedByEnabledMods++;
+                        result.ProvidedByEnabledModPaths[entry.Path] = consumerProviders;
+                    }
+                    else
+                    {
+                        entry.HeaderOutcome = missing;
+                        result.NotFound++;
+                        result.MissingPaths.Add(entry.Path);
+                    }
+
+                    continue;
+                }
+
+                // Record ownership as soon as the provider is known, before attempting any I/O.
+                entry.IsOwned = ReferenceEquals(container, state.Source);
+                if (entry.IsOwned)
+                    result.OwnedBySourcePack++;
+
+                var file = container.FindFile(entry.Path);
+                if (file == null)
+                {
+                    entry.HeaderOutcome = new TextureDownscaleFile(
+                        entry.Path,
+                        null,
+                        "the selected provider did not return the referenced file",
+                        TextureHeaderOutcomeKind.ReadFailure);
+                    if (!entry.IsOwned)
+                        result.HeaderUnreadable++;
                     continue;
                 }
 
                 if (ReferenceEquals(container, state.Source))
                 {
-                    result.OwnedBySourcePack++;
                     var ownedHeader = ReadTextureDownscaleHeader(entry.Path, file);
+                    entry.HeaderOutcome = ownedHeader;
                     if (ownedHeader.Layout != null)
                     {
                         entry.Layout = ownedHeader.Layout;
-                        entry.IsOwned = true;
                         repackTargets[entry.Path] = entry;
                     }
 
@@ -933,6 +995,7 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 var header = ReadTextureDownscaleHeader(entry.Path, file);
+                entry.HeaderOutcome = header;
                 if (header.Layout == null)
                 {
                     result.HeaderUnreadable++;
@@ -1295,6 +1358,22 @@ namespace Editors.PackOptimizer.Core
         // Report.
         // ---------------------------------------------------------------------------
 
+        private static void AppendVanillaCoveragePathList(
+            StringBuilder sb,
+            string label,
+            IEnumerable<string> paths)
+        {
+            var ordered = paths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToList();
+            if (ordered.Count == 0)
+                return;
+
+            sb.AppendLine($"  {label}:");
+            foreach (var path in ordered.Take(VanillaCoverageListLimit))
+                sb.AppendLine($"    {path}");
+            if (ordered.Count > VanillaCoverageListLimit)
+                sb.AppendLine($"    ... {ordered.Count - VanillaCoverageListLimit:N0} more path(s)");
+        }
+
         private static void AppendVanillaTextureCoverageSection(StringBuilder sb, BatchState state)
         {
             sb.AppendLine("Vanilla texture coverage");
@@ -1371,11 +1450,23 @@ namespace Editors.PackOptimizer.Core
                 $"{result.WsModelTexturesReferenced:N0}; distinct WSModel and direct embedded paths total " +
                 $"{result.TexturesReferenced:N0}. The total splits exactly into:");
             sb.AppendLine(
-                $"  Owned by the source pack (not assessed here): {result.OwnedBySourcePack:N0}");
+                $"  Owned by the source pack (not included in vanilla coverage): {result.OwnedBySourcePack:N0}");
             sb.AppendLine(
-                $"  Not found in any loaded container: {result.NotFound:N0}");
+                $"  Missing from every configured provider: {result.NotFound:N0}");
+            AppendVanillaCoveragePathList(sb, "Confirmed missing paths", result.MissingPaths);
             sb.AppendLine(
-                $"  Vanilla, header unreadable or layout unsupported: {result.HeaderUnreadable:N0}");
+                $"  Available only in enabled consumer packs (not resolution providers): {result.ProvidedByEnabledMods:N0}");
+            foreach (var (path, providers) in result.ProvidedByEnabledModPaths
+                         .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                         .Take(VanillaCoverageListLimit))
+            {
+                sb.AppendLine($"    {path} (provided by {providers})");
+            }
+            if (result.ProvidedByEnabledModPaths.Count > VanillaCoverageListLimit)
+                sb.AppendLine(
+                    $"    ... {result.ProvidedByEnabledModPaths.Count - VanillaCoverageListLimit:N0} more path(s)");
+            sb.AppendLine(
+                $"  Non-source providers, header unreadable or DDS layout unsupported: {result.HeaderUnreadable:N0}");
             sb.AppendLine(
                 $"  Vanilla, not reached (time budget): {result.NotReached:N0}");
             sb.AppendLine(

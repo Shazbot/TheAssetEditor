@@ -26,6 +26,18 @@ namespace Editors.PackOptimizer.Core
 {
     public sealed partial class PackTextureAtlasBatchService
     {
+        // Keep texture presence separate from header readability. A null DDS layout alone does not
+        // tell us whether the authored path is missing, malformed, or simply not yet assessed.
+        private enum TextureHeaderOutcomeKind
+        {
+            Unassessed,
+            Readable,
+            Missing,
+            UnsupportedLayout,
+            ReadFailure,
+            ProvidedByEnabledConsumer,
+        }
+
         public sealed record BatchResult(
             int VmdCount,
             int AtlasedMeshCount,

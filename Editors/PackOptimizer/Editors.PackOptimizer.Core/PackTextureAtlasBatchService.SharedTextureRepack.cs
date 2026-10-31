@@ -397,7 +397,8 @@ namespace Editors.PackOptimizer.Core
             public HashSet<string> Materials { get; } = new(StringComparer.OrdinalIgnoreCase);
             // Verified flow materials are rescaled even when flow_map is constant or copied.
             public HashSet<string> FlowCompensationMaterials { get; } = new(StringComparer.OrdinalIgnoreCase);
-            // Every texture of every bound material, any slot.
+            // Every texture needed to plan the rewrite. Confirmed-missing standard secondary slots
+            // remain in MaterialSlots for authored compatibility checks but are not dependencies.
             public HashSet<string> Textures { get; } = new(StringComparer.OrdinalIgnoreCase);
             // The layout map: the first (by text) of the distinct slot maps of the part's bound materials.
             public SortedDictionary<string, string> Slots { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -1500,7 +1501,7 @@ namespace Editors.PackOptimizer.Core
         private static string? GetSharedRepackBlockedTextureReason(DdsLayout? layout)
         {
             if (layout == null)
-                return "header unreadable";
+                return "DDS layout unavailable";
             if (layout.Format is not ("BC1" or "BC3" or "BC7"))
                 return $"{layout.Format} cannot be re-encoded";
             if (!IsPowerOfTwo(layout.Width) || !IsPowerOfTwo(layout.Height) ||
@@ -1511,6 +1512,44 @@ namespace Editors.PackOptimizer.Core
 
             return null;
         }
+
+        private static string? GetSharedRepackEntryBlockedTextureReason(
+            VanillaCoverageTexture entry,
+            DdsLayout? effectiveLayout = null)
+        {
+            var layout = effectiveLayout ?? entry.Layout;
+            if (layout != null)
+                return GetSharedRepackBlockedTextureReason(layout);
+
+            return entry.HeaderOutcome.Outcome switch
+            {
+                TextureHeaderOutcomeKind.Missing =>
+                    $"texture is missing from all configured providers: {entry.Path}",
+                TextureHeaderOutcomeKind.ProvidedByEnabledConsumer =>
+                    $"texture is present only in enabled consumer pack(s), not a resolution provider " +
+                    $"({entry.HeaderOutcome.Problem}): {entry.Path}",
+                TextureHeaderOutcomeKind.UnsupportedLayout =>
+                    $"{entry.HeaderOutcome.Problem}: {entry.Path}",
+                TextureHeaderOutcomeKind.ReadFailure =>
+                    $"{entry.HeaderOutcome.Problem}: {entry.Path}",
+                TextureHeaderOutcomeKind.Readable =>
+                    $"texture header was readable but no DDS layout was retained: {entry.Path}",
+                _ => $"texture header was not assessed: {entry.Path}",
+            };
+        }
+
+        private static bool IsSharedRepackPassThroughSecondarySlot(string slot)
+            => slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) ||
+               slot.Equals("t_xml_normal", StringComparison.OrdinalIgnoreCase) ||
+               slot.Equals("t_xml_material_map", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsConfirmedMissingSecondaryTexture(
+            VanillaTextureCoverageResult coverage,
+            string slot,
+            string path)
+            => IsSharedRepackPassThroughSecondarySlot(slot) &&
+               coverage.Entries.TryGetValue(Normalize(path), out var entry) &&
+               entry.HeaderOutcome.Outcome == TextureHeaderOutcomeKind.Missing;
 
         private static byte[] GetSharedRepackNeutralPixel(string slot)
         {
@@ -4282,15 +4321,21 @@ namespace Editors.PackOptimizer.Core
                         var noiseName = isDissolveMap ? "dissolve map" : isFlowGuid ? "flow GUID" :
                             isFlowMap ? "shared flow map" : "emissive distortion";
                         var noise = Normalize(texture);
-                        if (!coverage.Entries.TryGetValue(noise, out var noiseEntry) || noiseEntry.Layout == null)
+                        string? noiseReason;
+                        if (!coverage.Entries.TryGetValue(noise, out var noiseEntry))
+                        {
+                            noiseReason = $"texture is not present in coverage analysis: {noise}";
+                        }
+                        else
+                        {
+                            noiseReason = GetSharedRepackEntryBlockedTextureReason(noiseEntry);
+                        }
+
+                        if (noiseReason != null)
                         {
                             part.Reason ??= isFlowGuid || isFlowMap
-                                ? SharedRepackReasonFlowTexture + " (" + noiseName + " header unreadable)"
-                                : $"the {noiseName} texture cannot be read";
-                        }
-                        else if (GetSharedRepackBlockedTextureReason(noiseEntry.Layout) is { } blocked)
-                        {
-                            part.Reason ??= $"the {noiseName} texture cannot be copied: " + blocked;
+                                ? SharedRepackReasonFlowTexture + " (" + noiseName + ": " + noiseReason + ")"
+                                : $"the {noiseName} texture cannot be copied: " + noiseReason;
                         }
 
                         part.CopySlots.Add(slot);
@@ -4299,7 +4344,9 @@ namespace Editors.PackOptimizer.Core
                         continue;
                     }
 
-                    part.Textures.Add(Normalize(texture));
+                    var normalizedTexture = Normalize(texture);
+                    if (!IsConfirmedMissingSecondaryTexture(coverage, slot, normalizedTexture))
+                        part.Textures.Add(normalizedTexture);
                     if (!IsTextureDownscaleSlot(slot) && !IsSharedRepackAtlasSlot(info, slot))
                     {
                         part.Reason ??= isDistortion || isEmissiveTexture
@@ -4351,7 +4398,9 @@ namespace Editors.PackOptimizer.Core
                         part.Reason ??= SharedRepackReasonVariantCopySlot;
                     }
 
-                    part.VariantSlots.Add(map);
+                    part.VariantSlots.Add(new SortedDictionary<string, string>(
+                        map,
+                        StringComparer.OrdinalIgnoreCase));
                 }
             }
 
@@ -4369,6 +4418,7 @@ namespace Editors.PackOptimizer.Core
             if (shared != 1)
                 part.Reason ??= SharedRepackReasonBadPart;
 
+            var embeddedSlots = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (directConsumers.Count != 0)
             {
                 part.DirectEmbeddedMaterial = true;
@@ -4407,7 +4457,6 @@ namespace Editors.PackOptimizer.Core
                         part.Reason ??= SharedRepackReasonEmbeddedUnsupported;
 
                     var wsSlots = new SortedDictionary<string, string>(part.Slots, StringComparer.OrdinalIgnoreCase);
-                    var embeddedSlots = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var texture in textures)
                     {
                         var texturePath = Normalize(texture.Path);
@@ -4420,7 +4469,8 @@ namespace Editors.PackOptimizer.Core
                             if (IsSharedRepackIgnoredTexture(slot, texturePath))
                                 continue;
 
-                            part.Textures.Add(texturePath);
+                            if (!IsConfirmedMissingSecondaryTexture(coverage, slot, texturePath))
+                                part.Textures.Add(texturePath);
                             if (embeddedSlots.TryGetValue(slot, out var old) &&
                                 !old.Equals(texturePath, StringComparison.OrdinalIgnoreCase))
                             {
@@ -4460,9 +4510,66 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            // Keep the full authored maps above for material-variant and embedded-vs-WSModel
+            // compatibility checks. Only then project confirmed-missing standard secondary slots
+            // out of the repack layout; their original paths stay in MaterialSlots/EmbeddedTextures
+            // and the writers leave those entries unchanged.
+            ProjectMissingSharedRepackSecondarySlots(
+                part,
+                coverage,
+                part.DirectEmbeddedMaterial ? embeddedSlots : null);
+
             if (!coverage.PartData.ContainsKey((key.GeometryPath, key.LodIndex, key.PartIndex)))
                 part.Reason ??= SharedRepackReasonNoCoverage;
             return part;
+        }
+
+        private static void ProjectMissingSharedRepackSecondarySlots(
+            SharedRepackPart part,
+            VanillaTextureCoverageResult coverage,
+            IReadOnlyDictionary<string, string>? embeddedSlots)
+        {
+            var maps = part.MaterialSlots.Values
+                .Select(map => (IReadOnlyDictionary<string, string>)map)
+                .ToList();
+            if (embeddedSlots != null)
+                maps.Add(embeddedSlots);
+            if (maps.Count == 0)
+                return;
+
+            foreach (var slot in new[] { "t_xml_mask", "t_xml_normal", "t_xml_material_map" })
+            {
+                var uses = maps
+                    .Where(map => map.ContainsKey(slot))
+                    .Select(map => map[slot])
+                    .ToList();
+                if (uses.Count == 0 || uses.Count != maps.Count)
+                    continue;
+
+                var missing = uses.Count(path => IsConfirmedMissingSecondaryTexture(coverage, slot, path));
+                if (missing == 0)
+                    continue;
+
+                if (missing != uses.Count)
+                {
+                    var missingPaths = uses
+                        .Where(path => IsConfirmedMissingSecondaryTexture(coverage, slot, path))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+                    var otherPaths = uses
+                        .Where(path => !IsConfirmedMissingSecondaryTexture(coverage, slot, path))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+                    part.Reason ??= $"the secondary slot {slot} is confirmed missing in only some active " +
+                                    "material variants (missing: " + string.Join(", ", missingPaths) +
+                                    "; not confirmed missing: " + string.Join(", ", otherPaths) + ")";
+                    continue;
+                }
+
+                part.Slots.Remove(slot);
+                foreach (var variant in part.VariantSlots)
+                    variant.Remove(slot);
+            }
         }
 
         // Tile of every vertex and its tile-local UV. Null when fine, else why the part cannot
@@ -4548,7 +4655,7 @@ namespace Editors.PackOptimizer.Core
             if (blocked.Contains(texture))
             {
                 return "cannot be repacked (" +
-                       (GetSharedRepackBlockedTextureReason(entryOf[texture].Layout) ??
+                       (GetSharedRepackEntryBlockedTextureReason(entryOf[texture]) ??
                         "an owned override of a vanilla texture") + ")";
             }
 
@@ -4630,7 +4737,7 @@ namespace Editors.PackOptimizer.Core
 
             string? BlockedTextureReason(VanillaCoverageTexture entry, string path)
             {
-                var layoutReason = GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout);
+                var layoutReason = GetSharedRepackEntryBlockedTextureReason(entry, merge.Effective(entry).Layout);
                 if (layoutReason != null)
                     return "the texture cannot be repacked: " + layoutReason;
                 if (entry.IsOwned && OverridesVanillaPath(state, path))
@@ -4881,19 +4988,18 @@ namespace Editors.PackOptimizer.Core
                             map.TryGetValue(SharedRepackFlowMapSlot, out var value) &&
                             Normalize(value).Equals(texture, StringComparison.OrdinalIgnoreCase)))
                         .ToList();
-                    if (!coverage.Entries.TryGetValue(texture, out var entry) || entry.Layout == null)
+                    string? block;
+                    if (!coverage.Entries.TryGetValue(texture, out var entry))
                     {
-                        flowMapClosureMembers.Add(texture);
-                        blocked.Add(texture);
-                        members.Remove(texture);
-                        foreach (var owner in owners)
-                            owner.Reason ??= SharedRepackReasonFlowTexture + " (header unreadable)";
-                        continue;
+                        block = $"flow map texture is not present in coverage analysis: {texture}";
+                    }
+                    else
+                    {
+                        block = BlockedTextureReason(entry, texture);
+                        if (entry.UnassessableUses != 0 || entry.NonMaterialReference != null)
+                            block ??= "the flow map has a use whose material or part could not be assessed";
                     }
 
-                    var block = BlockedTextureReason(entry, texture);
-                    if (entry.UnassessableUses != 0 || entry.NonMaterialReference != null)
-                        block ??= "the flow map has a use whose material or part could not be assessed";
                     if (block != null)
                     {
                         flowMapClosureMembers.Add(texture);
@@ -4956,7 +5062,9 @@ namespace Editors.PackOptimizer.Core
                 if (IsBlockedTexture(otherEntry, texture))
                 {
                     return " but the texture cannot be repacked, so the set was not merged (" +
-                           (GetSharedRepackBlockedTextureReason(merge.Effective(otherEntry).Layout) ?? "an owned override of a vanilla texture") + ")";
+                           (GetSharedRepackEntryBlockedTextureReason(
+                               otherEntry, merge.Effective(otherEntry).Layout) ??
+                            "an owned override of a vanilla texture") + ")";
                 }
 
                 if (cappedTextures.Contains(texture))
@@ -4991,7 +5099,7 @@ namespace Editors.PackOptimizer.Core
 
                 if (!coverage.Entries.TryGetValue(texture, out var entry))
                     return (2, new("the outside texture is unknown to the analysis", null));
-                var layoutReason = GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout);
+                var layoutReason = GetSharedRepackEntryBlockedTextureReason(entry, merge.Effective(entry).Layout);
                 if (layoutReason != null)
                     return (0, new("the outside texture cannot be re-encoded: " + layoutReason, null));
                 if (blocked.Contains(texture) || BlockedTextureReason(entry, texture) is not null)

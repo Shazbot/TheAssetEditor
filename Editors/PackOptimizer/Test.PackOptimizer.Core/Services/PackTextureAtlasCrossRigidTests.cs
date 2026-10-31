@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Xml;
 using System.Numerics;
+using Moq;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.LodHeader;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
@@ -7291,12 +7292,14 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<int>(result, "TexturesReferenced"), Is.EqualTo(5));
             Assert.That(Get<int>(result, "OwnedBySourcePack"), Is.EqualTo(1));
             Assert.That(Get<int>(result, "NotFound"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "ProvidedByEnabledMods"), Is.Zero);
             Assert.That(Get<int>(result, "HeaderUnreadable"), Is.EqualTo(1));
             Assert.That(Get<int>(result, "NotReached"), Is.Zero);
             Assert.That(CoverageAssessed(result), Has.Count.EqualTo(2));
             Assert.That(
                 Get<int>(result, "OwnedBySourcePack") + Get<int>(result, "NotFound") +
-                Get<int>(result, "HeaderUnreadable") + Get<int>(result, "NotReached") +
+                Get<int>(result, "ProvidedByEnabledMods") + Get<int>(result, "HeaderUnreadable") +
+                Get<int>(result, "NotReached") +
                 CoverageAssessed(result).Count,
                 Is.EqualTo(Get<int>(result, "TexturesReferenced")));
             Assert.That(Get<IEnumerable>(result, "Croppable").Cast<object>().Count(), Is.EqualTo(1));
@@ -7380,9 +7383,10 @@ namespace Test.PackOptimizer.Core
             Assert.That(report, Does.StartWith("Vanilla texture coverage"));
             Assert.That(report, Does.Contain("Mode: REPORT ONLY. No pack file was changed."));
             Assert.That(report, Does.Contain("Textures referenced through the pack's WSModel materials: 5"));
-            Assert.That(report, Does.Contain("Owned by the source pack (not assessed here): 1"));
-            Assert.That(report, Does.Contain("Not found in any loaded container: 1"));
-            Assert.That(report, Does.Contain("Vanilla, header unreadable or layout unsupported: 1"));
+            Assert.That(report, Does.Contain("Owned by the source pack (not included in vanilla coverage): 1"));
+            Assert.That(report, Does.Contain("Missing from every configured provider: 1"));
+            Assert.That(report, Does.Contain("Confirmed missing paths:").And.Contain("textures\\missing.dds"));
+            Assert.That(report, Does.Contain("Non-source providers, header unreadable or DDS layout unsupported: 1"));
             Assert.That(report, Does.Contain("Vanilla, assessed: 2, which split exactly into:"));
             Assert.That(report, Does.Contain("Croppable: 1"));
             Assert.That(report, Does.Contain("Not croppable: 1"));
@@ -8325,6 +8329,7 @@ namespace Test.PackOptimizer.Core
             public Dictionary<string, Func<RmvFile>> Rigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<(string Root, string Ws)> Links { get; } = [];
             public List<(string Root, string Rigid)> DirectLinks { get; } = [];
+            public List<(string Name, Dictionary<string, byte[]> Files)> ConsumerPacks { get; } = [];
             // Roots whose traversal failed (partial discovery) and the raw text of each.
             public List<(string Root, string Text)> IncompleteRoots { get; } = [];
             public object Service { get; set; } = null!;
@@ -8398,6 +8403,8 @@ namespace Test.PackOptimizer.Core
 
                 InstallDownscaleGameplay(
                     State, CreateDownscaleResolution(true), index);
+                if (ConsumerPacks.Count != 0)
+                    InstallConsumers(State, 0, ConsumerPacks.ToArray());
                 if (IncompleteRoots.Count != 0)
                     SetStateProperty(State, "StructuralMergeConsumerDiscoveryComplete", false);
                 RunCoverage(Service, State, Fixture);
@@ -8814,6 +8821,286 @@ namespace Test.PackOptimizer.Core
             Assert.That(drops.GetValueOrDefault(
                 "embedded material textures disagree with the WSModel binding for the same part"), Is.GreaterThan(0));
             Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_MissingEmbeddedSecondaryTexturePassesThroughWithTheFullMapsValidated()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: true);
+            const string missing = "textures\\sr_direct_material_map.dds";
+            world.Fixture.Vanilla.Remove(missing);
+            SrInstallReadableSourceRigid(world);
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Does.Contain(SrRigid));
+            Assert.That(Get<HashSet<string>>(world.State, "SharedRepackTexturePaths"), Is.Not.Empty);
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            Assert.That(rigid.ModelList[0][0].Material!.GetTexture(TextureType.MaterialMap)!.Value.Path,
+                Is.EqualTo(missing));
+            var generatedPath = SrWsMaterial(world.State, SrWs, 0, 0);
+            var generatedXml = Encoding.UTF8.GetString(world.Fixture.Output[generatedPath]);
+            Assert.That(
+                SrSlotNode(generatedXml, SrMaterialMap).SelectSingleNode("source")!.InnerText.Trim(),
+                Is.EqualTo(missing));
+            Assert.That(world.Fixture.Output.ContainsKey(missing), Is.False);
+            Assert.That(SrValidateDirectRigidEmbeddedTextures(world), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [TestCase(SrMask, "textures\\missing_mask_m1.dds", "textures\\missing_mask_m2.dds")]
+        [TestCase(SrNormal, "textures\\missing_normal_m1.dds", "textures\\missing_normal_m2.dds")]
+        [TestCase(SrMaterialMap, "textures\\missing_material_map_m1.dds", "textures\\missing_material_map_m2.dds")]
+        public void SharedRepack_ConfirmedMissingXmlSecondarySlotsPassThroughWhileBaseTexturesRepack(
+            string slot,
+            string missingM1,
+            string missingM2)
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            AddMaterial(m1, "textures\\sr_b1.dds", "textures\\sr_n1.dds", missingM1);
+            AddMaterial(m2, "textures\\sr_b2.dds", "textures\\sr_n2.dds", missingM2);
+
+            void AddMaterial(string path, string baseTexture, string normal, string missing)
+            {
+                var slots = new List<(string Slot, string Texture)>
+                {
+                    (SrBase, baseTexture),
+                    (SrNormal, slot == SrNormal ? missing : normal),
+                };
+                if (slot != SrNormal)
+                    slots.Add((slot, missing));
+                world.Fixture.AddMaterial(path, slots.ToArray());
+            }
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            Assert.That(Get<HashSet<string>>(world.State, "SharedRepackTexturePaths"), Is.Not.Empty);
+            Assert.That(Get<int>(Get<object>(world.State, "VanillaTextureCoverage"), "NotFound"), Is.EqualTo(2));
+            var coverageReport = BuildCoverageSection(world.State);
+            Assert.That(coverageReport, Does.Contain(missingM1).And.Contain(missingM2));
+
+            foreach (var (part, missing) in new[] { (0, missingM1), (1, missingM2) })
+            {
+                var generatedPath = SrWsMaterial(world.State, SrWs, 0, part);
+                var generatedXml = Encoding.UTF8.GetString(world.Fixture.Output[generatedPath]);
+                Assert.That(
+                    SrSlotNode(generatedXml, slot).SelectSingleNode("source")!.InnerText.Trim(),
+                    Is.EqualTo(missing));
+                Assert.That(world.Fixture.Output.ContainsKey(missing), Is.False);
+            }
+
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_AllMissingSecondaryVariantsWithDifferentPathsPassThrough()
+        {
+            var world = BuildVariantSrWorld();
+            const string missingM1 = "textures\\missing_variant_mask_m1.dds";
+            const string missingM1b = "textures\\missing_variant_mask_m1b.dds";
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrMask, missingM1));
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1b"),
+                (SrBase, "textures\\sr_b1b.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrMask, missingM1b));
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            Assert.That(SrPartDropReasons(result), Does.Not.Contain("confirmed missing in only some active material variants"));
+            foreach (var (ws, missing) in new[] { (SrWs, missingM1), (SrVariantWs, missingM1b) })
+            {
+                var generatedPath = SrWsMaterial(world.State, ws, 0, 0);
+                var generatedXml = Encoding.UTF8.GetString(world.Fixture.Output[generatedPath]);
+                Assert.That(
+                    SrSlotNode(generatedXml, SrMask).SelectSingleNode("source")!.InnerText.Trim(),
+                    Is.EqualTo(missing));
+                Assert.That(world.Fixture.Output.ContainsKey(missing), Is.False);
+            }
+
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_MixedMissingAndPresentSecondaryVariantsStayBlocked()
+        {
+            var world = BuildVariantSrWorld();
+            const string missing = "textures\\missing_variant_mask.dds";
+            const string present = "textures\\present_variant_mask.dds";
+            world.AddTexture(present, 512, "BC1", false, 25);
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrMask, missing));
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1b"),
+                (SrBase, "textures\\sr_b1b.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrMask, present));
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(
+                SrPartDropReasons(result),
+                Does.Contain("the secondary slot t_xml_mask is confirmed missing in only some active material variants")
+                    .And.Contain(missing)
+                    .And.Contain(present));
+        }
+
+        [Test]
+        public void SharedRepack_VanillaProviderSuppliesSecondaryTextureAndItIsRepacked()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            const string provided = "textures\\provided_mask.dds";
+            world.AddTexture(provided, 512, "BC1", false, 26);
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrMask, provided));
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m2"),
+                (SrBase, "textures\\sr_b2.dds"),
+                (SrNormal, "textures\\sr_n2.dds"),
+                (SrMask, provided));
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(Get<object>(world.State, "VanillaTextureCoverage"), "NotFound"), Is.Zero);
+            foreach (var part in new[] { 0, 1 })
+            {
+                var generatedPath = SrWsMaterial(world.State, SrWs, 0, part);
+                var generatedXml = Encoding.UTF8.GetString(world.Fixture.Output[generatedPath]);
+                var outputTexture = SrSlotNode(generatedXml, SrMask).SelectSingleNode("source")!.InnerText.Trim();
+                Assert.That(outputTexture, Is.Not.EqualTo(provided));
+                Assert.That(world.Fixture.Output.ContainsKey(outputTexture), Is.True);
+            }
+
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_ConsumerOnlySecondaryProviderIsReportedAndStaysBlocked()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            const string consumerOnly = "textures\\consumer_only_mask.dds";
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrMask, consumerOnly));
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m2"),
+                (SrBase, "textures\\sr_b2.dds"),
+                (SrNormal, "textures\\sr_n2.dds"),
+                (SrMask, consumerOnly));
+            world.ConsumerPacks.Add(("StandaloneConsumer", ConsumerFiles((consumerOnly, "external texture"))));
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(Get<object>(world.State, "VanillaTextureCoverage"), "NotFound"), Is.Zero);
+            Assert.That(Get<int>(Get<object>(world.State, "VanillaTextureCoverage"), "ProvidedByEnabledMods"), Is.EqualTo(1));
+            Assert.That(
+                BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("present only in enabled consumer pack(s)")
+                    .And.Contain("StandaloneConsumer")
+                    .And.Contain(consumerOnly));
+            Assert.That(BuildCoverageSection(world.State), Does.Contain(consumerOnly));
+        }
+
+        [Test]
+        public void SharedRepack_MissingBaseColourRemainsBlockedAndNamesThePath()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            const string missing = "textures\\sr_b1.dds";
+            world.Fixture.Vanilla.Remove(missing);
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(
+                BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("texture is missing from all configured providers").And.Contain(missing));
+        }
+
+        [TestCase("textures\\sr_b1.dds", TestName = "SharedRepack_UnsupportedBaseColourDdsRemainsBlocked")]
+        [TestCase("textures\\sr_n1.dds", TestName = "SharedRepack_UnsupportedSecondaryNormalDdsRemainsBlocked")]
+        public void SharedRepack_UnsupportedDdsRemainsBlockedWithAccurateReason(string invalid)
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            world.Fixture.Vanilla[invalid] = new byte[128];
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(
+                BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("unsupported DDS layout").And.Contain(invalid));
+        }
+
+        [Test]
+        public void SharedRepack_MissingRequiredCopyTexturesRemainBlockedWithAccurateReasons()
+        {
+            var emissive = BuildEmissiveSrWorld();
+            emissive.Fixture.Vanilla.Remove(SrNoise);
+            var emissiveResult = emissive.Run(minimumSaving: 1, minimumGroupSaving: 1);
+            Assert.That(Get<int>(emissiveResult, "Built"), Is.Zero);
+            Assert.That(
+                SrPartDropReasons(emissiveResult),
+                Does.Contain("the emissive distortion texture cannot be copied")
+                    .And.Contain("texture is missing from all configured providers")
+                    .And.Contain(SrNoise));
+
+            var dissolve = BuildDissolveSrWorld();
+            dissolve.Fixture.Vanilla.Remove(SrDissolveMapTexture);
+            var dissolveResult = dissolve.Run(minimumSaving: 1, minimumGroupSaving: 1);
+            Assert.That(Get<int>(dissolveResult, "Built"), Is.Zero);
+            Assert.That(
+                SrPartDropReasons(dissolveResult),
+                Does.Contain("the dissolve map texture cannot be copied")
+                    .And.Contain("texture is missing from all configured providers")
+                    .And.Contain(SrDissolveMapTexture));
+        }
+
+        [Test]
+        public void SharedRepack_HeaderOutcomesDistinguishMissingUnsupportedAndReadFailure()
+        {
+            var readHeader = GetStaticMethod("ReadTextureDownscaleHeader");
+            var missing = readHeader.Invoke(null, ["textures\\missing.dds", null])!;
+            Assert.That(Get<object>(missing, "Outcome").ToString(), Is.EqualTo("Missing"));
+
+            var unsupportedFile = Shared.Core.PackFiles.Models.PackFile.CreateFromBytes(
+                "unsupported.dds", new byte[128]);
+            var unsupported = readHeader.Invoke(null, ["textures\\unsupported.dds", unsupportedFile])!;
+            Assert.That(Get<object>(unsupported, "Outcome").ToString(), Is.EqualTo("UnsupportedLayout"));
+            Assert.That(Get<string>(unsupported, "Problem"), Is.EqualTo("unsupported DDS layout"));
+
+            var throwingSource = new Mock<Shared.Core.PackFiles.Models.FileSources.IDataSource>();
+            throwingSource
+                .Setup(source => source.PeekData(It.IsAny<int>()))
+                .Throws(new System.IO.IOException("peek failed"));
+            var unreadableFile = new Shared.Core.PackFiles.Models.PackFile("unreadable.dds", throwingSource.Object);
+            var unreadable = readHeader.Invoke(null, ["textures\\unreadable.dds", unreadableFile])!;
+            Assert.That(Get<object>(unreadable, "Outcome").ToString(), Is.EqualTo("ReadFailure"));
+            Assert.That(Get<string>(unreadable, "Problem"), Does.Contain("IOException"));
+
+            var entryType = GetNestedType("VanillaCoverageTexture");
+            var entry = entryType.GetConstructors(AnyInstance).Single().Invoke(["textures\\unreadable.dds"]);
+            entryType.GetProperty("HeaderOutcome", AnyInstance)!.SetValue(entry, unreadable);
+            var reason = (string?)GetStaticMethod("GetSharedRepackEntryBlockedTextureReason")
+                .Invoke(null, [entry, null]);
+            Assert.That(reason, Does.Contain("header unreadable (IOException)").And.Contain("textures\\unreadable.dds"));
         }
 
         [Test]
@@ -19343,6 +19630,9 @@ namespace Test.PackOptimizer.Core
             // 41: final XML minification is exercised by dedicated pack-output tests; the pinned
             // stage fixture below does not run a whole-pack output pass, so its hash is unchanged.
             [41] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 42: confirmed-missing standard secondary material textures are passed through by the
+            // shared repack; the pinned stages do not include shared-repack output, so this is unchanged.
+            [42] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()

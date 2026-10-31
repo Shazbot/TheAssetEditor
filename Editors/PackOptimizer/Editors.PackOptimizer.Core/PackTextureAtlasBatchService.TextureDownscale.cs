@@ -148,7 +148,8 @@ namespace Editors.PackOptimizer.Core
         private sealed record TextureDownscaleFile(
             string Path,
             DdsLayout? Layout,
-            string Problem);
+            string Problem,
+            TextureHeaderOutcomeKind Outcome = TextureHeaderOutcomeKind.Unassessed);
 
         private sealed record TextureDownscaleCandidate(
             string Path,
@@ -477,7 +478,8 @@ namespace Editors.PackOptimizer.Core
             PackFile? file)
         {
             if (file == null)
-                return new TextureDownscaleFile(path, null, "file not found");
+                return new TextureDownscaleFile(
+                    path, null, "file not found", TextureHeaderOutcomeKind.Missing);
 
             byte[] header;
             try
@@ -493,12 +495,17 @@ namespace Editors.PackOptimizer.Core
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                return new TextureDownscaleFile(path, null, $"header unreadable ({ex.GetType().Name})");
+                return new TextureDownscaleFile(
+                    path,
+                    null,
+                    $"header unreadable ({ex.GetType().Name})",
+                    TextureHeaderOutcomeKind.ReadFailure);
             }
 
             return TryReadDdsLayout(header, out var layout)
-                ? new TextureDownscaleFile(path, layout, string.Empty)
-                : new TextureDownscaleFile(path, null, "unsupported DDS layout");
+                ? new TextureDownscaleFile(path, layout, string.Empty, TextureHeaderOutcomeKind.Readable)
+                : new TextureDownscaleFile(
+                    path, null, "unsupported DDS layout", TextureHeaderOutcomeKind.UnsupportedLayout);
         }
 
         // The source header with new dimensions and mip count, as a standalone header the
