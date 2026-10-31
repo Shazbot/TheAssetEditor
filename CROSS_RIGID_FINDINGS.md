@@ -1000,3 +1000,19 @@ See [Meshoptimizer findings](MESHOPT_FINDINGS.md) for inputs, baseline revision,
 measurement scope, per-LOD exceptions and validation limits. These are static
 analyzer estimates from the pre-extraction pipeline; the newer host pipeline
 was not re-benchmarked. Blended transparency still needs an in-game check.
+
+## 2026-10-31: Full-attribute native remapping and triangle filtering (OutputVersion 39)
+
+Adopted `meshopt_generateVertexRemap` and `meshopt_filterIndexBuffer` before
+cache/overdraw/fetch optimization, using complete canonical vertex attributes.
+This removes same-winding duplicate and full-key-degenerate triangles while
+retaining reverse winding, UV and skinning distinctions. Part/material slots
+stay in place, including parts emptied by filtering. The report counts removed
+triangles and the rigid reader supports valid empty sections.
+
+The integrated production path passed validation over 219 rigid roundtrips and
+3,330 parts: 36,281 TEB and 48,108 Albion triangles removed, zero validation
+errors. All 24 focused Release checks were validated; full pack benchmarks
+were not repeated. See [Meshoptimizer findings](MESHOPT_FINDINGS.md) for the
+single-pass prototype timings, increased remap allocations and blended-surface
+appearance caveat. Output version 39 expires cached outputs.

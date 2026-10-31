@@ -100,6 +100,27 @@ internal static partial class MeshOptNative
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static unsafe partial nuint OptimizeVertexFetchRemap(uint* destination, uint* indices, nuint indexCount, nuint vertexCount);
 
+    [LibraryImport(LibraryName, EntryPoint = "meshopt_generateVertexRemap")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static unsafe partial nuint GenerateVertexRemap(
+        uint* destination,
+        uint* indices,
+        nuint indexCount,
+        void* vertices,
+        nuint vertexCount,
+        nuint vertexSize);
+
+    [LibraryImport(LibraryName, EntryPoint = "meshopt_filterIndexBuffer")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static unsafe partial nuint FilterIndexBuffer(
+        uint* destination,
+        uint* indices,
+        nuint indexCount,
+        void* vertices,
+        nuint vertexCount,
+        nuint vertexSize,
+        nuint vertexStride);
+
     // Looks next to the executable and in runtimes/win-x64/native when the default probing misses the
     // library, so a plain publish (not only a single-file bundle) finds the committed DLL.
     private static IntPtr Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)

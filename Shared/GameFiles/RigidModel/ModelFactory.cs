@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.IO;
+using System.Runtime.InteropServices;
 using Shared.ByteParsing;
 using Shared.GameFormats.RigidModel.LodHeader;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
@@ -116,11 +117,32 @@ namespace Shared.GameFormats.RigidModel
         RmvMesh LoadMesh(RmvVersionEnum rmvVersionEnum, byte[] dataArray, RmvCommonHeader commonHeader, VertexFormat binaryVertexFormat, int modelStartOffset)
         {
             var vertexFactory = VertexFactory.Create();
+            if (vertexFactory.IsKnownVertex(binaryVertexFormat) == false)
+                throw new Exception($"Unknown vertex format for {commonHeader.ModelTypeFlag} - {binaryVertexFormat}.");
 
+            if (commonHeader.VertexCount == 0)
+            {
+                if (commonHeader.IndexCount != 0 || commonHeader.IndexOffset != commonHeader.VertexOffset)
+                {
+                    throw new InvalidDataException(
+                        "An empty rigid-model mesh must have zero indices and no vertex-section bytes.");
+                }
+
+                var emptyMeshOffset = (long)modelStartOffset + commonHeader.VertexOffset;
+                if (emptyMeshOffset < 0 || emptyMeshOffset > dataArray.Length)
+                    throw new InvalidDataException("The empty rigid-model mesh offset is outside the file data.");
+
+                return new RmvMesh
+                {
+                    VertexList = [],
+                    IndexList = [],
+                };
+            }
+
+            if (commonHeader.IndexOffset < commonHeader.VertexOffset)
+                throw new InvalidDataException("Rigid-model index data begins before its vertex data.");
             var vertexStart = commonHeader.VertexOffset + modelStartOffset;
             var expectedVertexSize = (commonHeader.IndexOffset - commonHeader.VertexOffset) / commonHeader.VertexCount;
-            if (vertexFactory.IsKnownVertex(binaryVertexFormat) == false)
-                throw new Exception($"Unknown vertex format for {commonHeader.ModelTypeFlag} - {binaryVertexFormat}. Size:{expectedVertexSize}");
 
             var vertexSize = vertexFactory.GetVertexSize(binaryVertexFormat, rmvVersionEnum);
             if (expectedVertexSize != vertexSize)

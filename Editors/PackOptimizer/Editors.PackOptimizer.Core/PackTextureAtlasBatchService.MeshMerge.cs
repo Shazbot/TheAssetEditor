@@ -493,10 +493,11 @@ namespace Editors.PackOptimizer.Core
         // qualifies when the source pack owns it (vanilla/CA rigids are never
         // written), a root in scope reaches it, and the same consumer-safety gate
         // the structural merge uses passes: complete consumer discovery and no
-        // immutable (vanilla) WSModel consumer. The optimizer keeps the part count,
-        // part order and triangle count of every model, so WSModel material
-        // indices and direct VMD references stay valid; it only reorders and
-        // deduplicates vertices inside a part. Cloth model types are left alone
+        // immutable (vanilla) WSModel consumer. The optimizer keeps the part count
+        // and order, so WSModel material indices and direct VMD references stay
+        // valid; it may remove faces that become full-payload-degenerate or duplicate
+        // in the same winding, then reorder and compact geometry inside each part.
+        // Cloth model types are left alone
         // because nothing here shows that their vertex order is free to change,
         // and a rigid whose index buffers the optimizer would reject is skipped
         // instead of failing the run.

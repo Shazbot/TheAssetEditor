@@ -2585,6 +2585,9 @@ namespace Editors.PackOptimizer.Core
                     $"({geometryVertexChange:+0.0;-0.0;0.0} %), " +
                     $"indices {state.GeometryIndicesBefore:N0} -> {state.GeometryIndicesAfter:N0}, " +
                     $"geometry bytes {state.GeometryBytesBefore:N0} -> {state.GeometryBytesAfter:N0}");
+                sb.AppendLine(
+                    $"Triangles removed by geometry optimisation: " +
+                    $"{(state.GeometryIndicesBefore - state.GeometryIndicesAfter) / 3:N0}");
                 if (!state.TextureAtlasingActive && !state.CrossRigidOnly)
                 {
                     sb.AppendLine(

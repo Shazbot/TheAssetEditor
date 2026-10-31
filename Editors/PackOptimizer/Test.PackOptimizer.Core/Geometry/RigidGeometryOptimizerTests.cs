@@ -1,7 +1,11 @@
 using Editors.PackOptimizer.Core;
 using GameWorld.MeshOptimizer;
+using System.Buffers.Binary;
+using Shared.ByteParsing;
 using System.Numerics;
 using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.RigidModel.LodHeader;
+using Shared.GameFormats.RigidModel.MaterialHeaders;
 using Shared.GameFormats.RigidModel.Vertex;
 
 namespace Test.PackOptimizer.Core
@@ -9,7 +13,7 @@ namespace Test.PackOptimizer.Core
     public class RigidGeometryOptimizerTests
     {
         [Test]
-        public void Optimize_PreservesDegenerateTrianglesWhileRemovingUnusedAndDuplicateVertices()
+        public void Optimize_FiltersDegenerateAndDuplicateTrianglesWhileRemovingUnusedAndDuplicateVertices()
         {
             var model = CreateModel(
                 [
@@ -34,14 +38,14 @@ namespace Test.PackOptimizer.Core
                 Assert.That(statistics.UnreferencedVerticesRemoved, Is.EqualTo(1));
                 Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(1));
                 Assert.That(statistics.IndicesBefore, Is.EqualTo(9));
-                Assert.That(statistics.IndicesAfter, Is.EqualTo(9));
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(3));
                 Assert.That(model.Mesh.VertexList, Has.Length.EqualTo(3));
-                Assert.That(model.Mesh.IndexList, Has.Length.EqualTo(9));
+                Assert.That(model.Mesh.IndexList, Has.Length.EqualTo(3));
             });
         }
 
         [Test]
-        public void Optimize_PreservesTriangleCountWhenExactVertexDeduplicationMakesTriangleIndexDegenerate()
+        public void Optimize_FiltersTriangleMadeDegenerateByFullPayloadVertexDeduplication()
         {
             var model = CreateModel(
                 [
@@ -62,8 +66,8 @@ namespace Test.PackOptimizer.Core
             Assert.Multiple(() =>
             {
                 Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(1));
-                Assert.That(model.Mesh.IndexList.Length / 3, Is.EqualTo(triangleCountBefore));
-                Assert.That(statistics.IndicesAfter, Is.EqualTo(statistics.IndicesBefore));
+                Assert.That(model.Mesh.IndexList.Length / 3, Is.EqualTo(triangleCountBefore - 1));
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(3));
             });
         }
 
@@ -117,15 +121,195 @@ namespace Test.PackOptimizer.Core
                 9, 9, 0,
             ];
             var model = CreateModel(vertices, (ushort[])indices.Clone());
-            var before = TrianglePayloadKeys(vertices, indices);
+            var before = TrianglePayloadKeys(vertices, indices).Take(3).ToArray();
 
             var statistics = RigidGeometryOptimizer.Optimize(model);
 
             Assert.Multiple(() =>
             {
-                Assert.That(statistics.IndicesAfter, Is.EqualTo(indices.Length));
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(indices.Length - 3));
                 Assert.That(TrianglePayloadKeys(model), Is.EquivalentTo(before));
             });
+        }
+
+        [Test]
+        public void Optimize_FiltersCyclicAndExactDuplicatesButKeepsReverseWinding()
+        {
+            var a = Vertex(0, 0, 0);
+            var b = Vertex(1, 0, 0);
+            var c = Vertex(0, 1, 0);
+            var vertices = new[] { a, b, c, Clone(a), Clone(b), Clone(c) };
+            ushort[] indices = [0, 1, 2, 1, 2, 0, 3, 4, 5, 0, 2, 1];
+            var model = CreateModel(vertices, (ushort[])indices.Clone());
+            var expected = TrianglePayloadKeys(vertices, [0, 1, 2, 0, 2, 1]);
+
+            var statistics = RigidGeometryOptimizer.Optimize(model);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(3));
+                Assert.That(statistics.IndicesBefore, Is.EqualTo(12));
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(6));
+                Assert.That(TrianglePayloadKeys(model), Is.EquivalentTo(expected));
+            });
+        }
+
+        [Test]
+        public void Optimize_FullPayloadKeyPreservesDistinctUvNormalTangentBoneAndColourValues()
+        {
+            var baseVertex = Vertex(0, 0, 0);
+            var vertices = new[]
+            {
+                baseVertex,
+                Clone(baseVertex),
+                Clone(baseVertex),
+                Clone(baseVertex),
+                Clone(baseVertex),
+                Clone(baseVertex),
+                Clone(baseVertex),
+                Clone(baseVertex),
+                Clone(baseVertex),
+                Clone(baseVertex),
+            };
+            vertices[2].Uv = new Vector2(0.25f, 0.75f);
+            vertices[3].Uv1 = new Vector2(0.25f, 0.75f);
+            vertices[4].Normal = new Vector3(0, 1, 0);
+            vertices[5].BiNormal = new Vector3(1, 0, 0);
+            vertices[6].Tangent = new Vector3(0, -1, 0);
+            vertices[7].BoneIndex = [1];
+            vertices[8].BoneWeight = [0.5f];
+            vertices[9].Colour = new Vector4(0.5f, 1, 1, 1);
+            ushort[] indices = [0, 1, 2, 0, 3, 4, 0, 5, 6, 0, 7, 8, 9, 3, 4];
+            var model = CreateModel(vertices, indices);
+            var expected = TrianglePayloadKeys(vertices, [0, 3, 4, 0, 5, 6, 0, 7, 8, 9, 3, 4]);
+
+            var statistics = RigidGeometryOptimizer.Optimize(model);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(12));
+                Assert.That(TrianglePayloadKeys(model), Is.EquivalentTo(expected));
+                Assert.That(model.Mesh.VertexList, Has.Length.EqualTo(8));
+            });
+        }
+
+        [Test]
+        public void Optimize_CanonicalizesSignedZeroAndNanButDistinguishesNullAndEmptyBoneArrays()
+        {
+            var first = Vertex(0, 0, 0);
+            first.Normal = new Vector3(float.NaN, 0, 1);
+            var samePayload = Clone(first);
+            samePayload.Position = new Vector4(-0f, 0, 0, 1);
+            samePayload.Normal = new Vector3(BitConverter.Int32BitsToSingle(unchecked((int)0x7fc12345)), 0, 1);
+            var second = Vertex(1, 0, 0);
+            var third = Vertex(0, 1, 0);
+            var vertices = new[] { first, second, third, samePayload };
+            ushort[] indices = [0, 1, 2, 3, 2, 1];
+            var model = CreateModel(vertices, (ushort[])indices.Clone());
+
+            var statistics = RigidGeometryOptimizer.Optimize(model);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(1));
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(6), "the reverse-winding triangle is retained");
+                Assert.That(model.Mesh.VertexList, Has.Length.EqualTo(3));
+            });
+
+            var nullBone = Vertex(0, 0, 0);
+            var emptyBone = Clone(nullBone);
+            nullBone.BoneIndex = null!;
+            emptyBone.BoneIndex = [];
+            var thirdBoneVariant = Clone(nullBone);
+            thirdBoneVariant.BoneIndex = [1];
+            var nullVsEmpty = CreateModel([nullBone, emptyBone, thirdBoneVariant], [0, 1, 2]);
+            var nullVsEmptyStats = RigidGeometryOptimizer.Optimize(nullVsEmpty);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(nullVsEmptyStats.DuplicateVerticesRemoved, Is.Zero);
+                Assert.That(nullVsEmptyStats.IndicesAfter, Is.EqualTo(3));
+                Assert.That(nullVsEmpty.Mesh.VertexList, Has.Length.EqualTo(3));
+            });
+
+            var nullWeight = Vertex(0, 0, 0);
+            var emptyWeight = Clone(nullWeight);
+            var populatedWeight = Clone(nullWeight);
+            nullWeight.BoneIndex = [0];
+            emptyWeight.BoneIndex = [0];
+            populatedWeight.BoneIndex = [0];
+            nullWeight.BoneWeight = null!;
+            emptyWeight.BoneWeight = [];
+            populatedWeight.BoneWeight = [1f];
+            var nullVsEmptyWeight = CreateModel([nullWeight, emptyWeight, populatedWeight], [0, 1, 2]);
+            var nullVsEmptyWeightStats = RigidGeometryOptimizer.Optimize(nullVsEmptyWeight);
+            Assert.Multiple(() =>
+            {
+                Assert.That(nullVsEmptyWeightStats.DuplicateVerticesRemoved, Is.Zero);
+                Assert.That(nullVsEmptyWeightStats.IndicesAfter, Is.EqualTo(3));
+            });
+        }
+
+        [Test]
+        public void Optimize_UsesFirstReferencedRepresentativeForAnExactDuplicate()
+        {
+            var unusedEarlierCopy = Vertex(0, 0, 0);
+            var firstReferencedCopy = Clone(unusedEarlierCopy);
+            var b = Vertex(1, 0, 0);
+            var c = Vertex(0, 1, 0);
+            var model = CreateModel([unusedEarlierCopy, b, c, firstReferencedCopy], [3, 1, 2]);
+
+            RigidGeometryOptimizer.Optimize(model);
+
+            Assert.That(model.Mesh.VertexList.Any(vertex => ReferenceEquals(vertex, firstReferencedCopy)), Is.True);
+            Assert.That(model.Mesh.VertexList.Any(vertex => ReferenceEquals(vertex, unusedEarlierCopy)), Is.False);
+        }
+
+        [Test]
+        public void Optimize_AllFilteredWeightedPartSerializesAndReloadsAsEmpty()
+        {
+            var duplicate = WeightedVertex(0, 0, 0);
+            var rigid = CreateWeightedRigid([duplicate, Clone(duplicate), Clone(duplicate)], [0, 1, 2]);
+            var model = rigid.ModelList[0][0];
+
+            var statistics = RigidGeometryOptimizer.Optimize(model);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(statistics.IndicesAfter, Is.Zero);
+                Assert.That(model.Mesh.IndexList, Is.Empty);
+                Assert.That(model.Mesh.VertexList, Is.Empty);
+            });
+
+            rigid.RecalculateOffsets();
+            var bytes = ModelFactory.Create().Save(rigid, validateByReloading: true, logProgress: false);
+            var reloaded = ModelFactory.Create().Load(bytes).ModelList[0][0];
+            Assert.Multiple(() =>
+            {
+                Assert.That(reloaded.Mesh.IndexList, Is.Empty);
+                Assert.That(reloaded.Mesh.VertexList, Is.Empty);
+                Assert.That(reloaded.Material.BinaryVertexFormat, Is.EqualTo(VertexFormat.Weighted));
+            });
+        }
+
+        [Test]
+        public void ModelFactory_RejectsContradictoryEmptyMeshHeaders()
+        {
+            var rigid = CreateWeightedRigid([], []);
+            var bytesWithIndex = ModelFactory.Create().Save(rigid, validateByReloading: false, logProgress: false);
+            var modelStart = RmvFileHeader.HeaderSize + (int)LodHeaderFactory.Create().GetHeaderSize(rigid.Header.Version);
+            var commonHeader = ByteHelper.ByteArrayToStructure<RmvCommonHeader>(bytesWithIndex, modelStart);
+            commonHeader.IndexCount = 1;
+            Array.Copy(ByteHelper.GetBytes(commonHeader), 0, bytesWithIndex, modelStart, ByteHelper.GetSize<RmvCommonHeader>());
+
+            Assert.Throws<InvalidDataException>(() => ModelFactory.Create().Load(bytesWithIndex));
+
+            var bytesWithVertexSection = ModelFactory.Create().Save(rigid, validateByReloading: false, logProgress: false);
+            commonHeader = ByteHelper.ByteArrayToStructure<RmvCommonHeader>(bytesWithVertexSection, modelStart);
+            commonHeader.IndexOffset++;
+            Array.Copy(ByteHelper.GetBytes(commonHeader), 0, bytesWithVertexSection, modelStart, ByteHelper.GetSize<RmvCommonHeader>());
+
+            Assert.Throws<InvalidDataException>(() => ModelFactory.Create().Load(bytesWithVertexSection));
         }
 
         [Test]
@@ -248,6 +432,94 @@ namespace Test.PackOptimizer.Core
             });
         }
 
+        [Test]
+        public void NativeVertexRemap_FindsExactFullKeyDuplicatesAndMarksUnusedVertices()
+        {
+            var keys = UIntKeys(10, 20, 30, 10, 40);
+
+            var result = MeshOptTriangleOrderOptimizer.GenerateVertexRemap(
+                [3, 1, 2, 0, 1, 2],
+                keys,
+                vertexCount: 5,
+                vertexStride: 4);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.UniqueVertexCount, Is.EqualTo(3));
+                Assert.That(result.OldToNew[3], Is.EqualTo(result.OldToNew[0]));
+                Assert.That(result.OldToNew[0], Is.Not.EqualTo(uint.MaxValue));
+                Assert.That(result.OldToNew[1], Is.Not.EqualTo(uint.MaxValue));
+                Assert.That(result.OldToNew[2], Is.Not.EqualTo(uint.MaxValue));
+                Assert.That(result.OldToNew[4], Is.EqualTo(uint.MaxValue));
+            });
+        }
+
+        [Test]
+        public void NativeVertexRemap_HandlesEmptyInputAndTheFullUshortIndexRange()
+        {
+            var empty = MeshOptTriangleOrderOptimizer.GenerateVertexRemap([], [], vertexCount: 0, vertexStride: 4);
+            var keys = UIntKeys(Enumerable.Range(0, ushort.MaxValue + 1).ToArray());
+            ushort[] indices = [ushort.MaxValue, 0, 32768];
+
+            var fullRange = MeshOptTriangleOrderOptimizer.GenerateVertexRemap(indices, keys, vertexCount: ushort.MaxValue + 1, vertexStride: 4);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(empty.UniqueVertexCount, Is.Zero);
+                Assert.That(empty.OldToNew, Is.Empty);
+                Assert.That(fullRange.UniqueVertexCount, Is.EqualTo(3));
+                Assert.That(fullRange.OldToNew[ushort.MaxValue], Is.Not.EqualTo(fullRange.OldToNew[0]));
+                Assert.That(fullRange.OldToNew[0], Is.Not.EqualTo(fullRange.OldToNew[32768]));
+                Assert.That(fullRange.OldToNew[1], Is.EqualTo(uint.MaxValue));
+            });
+        }
+
+        [Test]
+        public void NativeIndexFilter_RemovesFullKeyDegeneratesAndDuplicatesButKeepsReverseWinding()
+        {
+            var keys = UIntKeys(10, 20, 30, 10, 20, 30);
+            ushort[] indices = [0, 1, 2, 1, 2, 0, 3, 4, 5, 0, 2, 1, 0, 0, 1];
+
+            var filtered = MeshOptTriangleOrderOptimizer.FilterIndexBuffer(indices, keys, vertexCount: 6, vertexStride: 4);
+
+            var outputKeys = new int[filtered.Length];
+            for (var i = 0; i < filtered.Length; i++)
+                outputKeys[i] = BinaryPrimitives.ReadInt32LittleEndian(keys.AsSpan(filtered[i] * 4, 4));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(filtered, Has.Length.EqualTo(6));
+                Assert.That(outputKeys, Is.EqualTo(new[] { 10, 20, 30, 10, 30, 20 }));
+            });
+        }
+
+        [Test]
+        public void NativeIndexFilter_ReturnsEmptyForEmptyOrFullyFilteredInput()
+        {
+            Assert.That(
+                MeshOptTriangleOrderOptimizer.FilterIndexBuffer([], [], vertexCount: 0, vertexStride: 4),
+                Is.Empty);
+            Assert.That(
+                MeshOptTriangleOrderOptimizer.FilterIndexBuffer([0, 1, 2], UIntKeys(1, 1, 1), vertexCount: 3, vertexStride: 4),
+                Is.Empty);
+        }
+
+        [Test]
+        public void NativeRemapAndFilter_RejectMalformedBuffersAndOutOfRangeIndices()
+        {
+            var keys = UIntKeys(1, 2, 3);
+
+            Assert.Multiple(() =>
+            {
+                Assert.Throws<ArgumentException>(() => MeshOptTriangleOrderOptimizer.GenerateVertexRemap([0, 1], keys, 3, 4));
+                Assert.Throws<ArgumentException>(() => MeshOptTriangleOrderOptimizer.GenerateVertexRemap([0, 1, 3], keys, 3, 4));
+                Assert.Throws<ArgumentException>(() => MeshOptTriangleOrderOptimizer.FilterIndexBuffer([0, 1], keys, 3, 4));
+                Assert.Throws<ArgumentException>(() => MeshOptTriangleOrderOptimizer.FilterIndexBuffer([0, 1, 3], keys, 3, 4));
+                Assert.Throws<ArgumentException>(() => MeshOptTriangleOrderOptimizer.FilterIndexBuffer([0, 1, 2], keys[..^1], 3, 4));
+                Assert.Throws<ArgumentOutOfRangeException>(() => MeshOptTriangleOrderOptimizer.GenerateVertexRemap([0, 1, 2], keys, 3, 260));
+            });
+        }
+
         private static RmvModel CreateModel(CommonVertex[] vertices, ushort[] indices)
             => new()
             {
@@ -257,6 +529,45 @@ namespace Test.PackOptimizer.Core
                     IndexList = indices,
                 },
             };
+
+        private static RmvFile CreateWeightedRigid(CommonVertex[] vertices, ushort[] indices)
+        {
+            const RmvVersionEnum version = RmvVersionEnum.RMV2_V8;
+            var commonHeader = RmvCommonHeader.CreateDefault();
+            commonHeader.ModelTypeFlag = ModelMaterialEnum.weighted;
+            var model = new RmvModel
+            {
+                CommonHeader = commonHeader,
+                Material = new WeightedMaterial
+                {
+                    BinaryVertexFormat = VertexFormat.Weighted,
+                    MaterialId = ModelMaterialEnum.weighted,
+                    ModelName = "part",
+                    TextureDirectory = "tex",
+                },
+                Mesh = new RmvMesh
+                {
+                    VertexList = vertices,
+                    IndexList = indices,
+                },
+            };
+
+            var header = new RmvFileHeader
+            {
+                _fileType = "RMV2"u8.ToArray(),
+                Version = version,
+                LodCount = 1,
+            };
+            header.SkeletonName = "skeleton";
+            var rigid = new RmvFile
+            {
+                Header = header,
+                LodHeaders = [LodHeaderFactory.Create().CreateEmpty(version, 100f, 0, 0)],
+                ModelList = [[model]],
+            };
+            rigid.RecalculateOffsets();
+            return rigid;
+        }
 
         private static CommonVertex Vertex(float x, float y, float z)
             => new()
@@ -272,6 +583,38 @@ namespace Test.PackOptimizer.Core
                 BoneWeight = [],
                 WeightCount = 0,
             };
+
+        private static CommonVertex WeightedVertex(float x, float y, float z)
+        {
+            var vertex = Vertex(x, y, z);
+            vertex.BoneIndex = [0, 1];
+            vertex.BoneWeight = [1f, 0f];
+            vertex.WeightCount = 2;
+            return vertex;
+        }
+
+        private static CommonVertex Clone(CommonVertex source)
+            => new()
+            {
+                Position = source.Position,
+                Normal = source.Normal,
+                BiNormal = source.BiNormal,
+                Tangent = source.Tangent,
+                Uv = source.Uv,
+                Uv1 = source.Uv1,
+                Colour = source.Colour,
+                BoneIndex = source.BoneIndex?.ToArray()!,
+                BoneWeight = source.BoneWeight?.ToArray()!,
+                WeightCount = source.WeightCount,
+            };
+
+        private static byte[] UIntKeys(params int[] keys)
+        {
+            var bytes = new byte[checked(keys.Length * sizeof(uint))];
+            for (var i = 0; i < keys.Length; i++)
+                BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(i * sizeof(uint)), checked((uint)keys[i]));
+            return bytes;
+        }
 
         private static CommonVertex Vertex(float x, float y, float z, byte payloadId)
         {

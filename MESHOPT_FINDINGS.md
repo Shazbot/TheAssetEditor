@@ -2,23 +2,28 @@
 
 ## Adopted change
 
-Optimize Pack now orders each rewritten rigid model part with
-`meshopt_optimizeVertexCache`, followed by `meshopt_optimizeOverdraw`, then the
-existing first-use vertex remap. Exact full-vertex deduplication is preserved.
-The overdraw threshold is **1.05f**: the overdraw pass may sacrifice up to 5% of
-the preceding native cache pass's vertex-cache efficiency to reduce overdraw.
-This threshold is relative to that cache pass, not to the previous managed
-algorithm or to frame rate.
+Optimize Pack uses native `meshopt_generateVertexRemap` to deduplicate complete
+vertex payloads, then `meshopt_filterIndexBuffer` to remove full-attribute
+degenerate and same-winding duplicate faces. The surviving indices then pass
+through `meshopt_optimizeVertexCache`, `meshopt_optimizeOverdraw`, and
+`meshopt_optimizeVertexFetch`.
 
-The existing modified-rigid scope and geometry-option gate are unchanged. The
-new public wrapper validates triangle buffers, vertex bounds and finite float3
-positions before entering the native code. No triangles, including degenerate
-triangles, are removed by the ordering pass.
+Full-attribute keys include every CommonVertex field and preserve the existing
+signed-zero, NaN, null-array and array-length equality semantics. Vertex
+representatives retain their complete original payloads. Opposite-winding faces
+and attribute distinctions remain separate. The existing modified-rigid scope,
+geometry-option gate, part count and part order are unchanged.
 
-On `feature/wh3-asset-host`, the implementation lives in the headless
-`GameWorld.MeshOptimizer` library and uses its existing native-library resolver.
-`PackOptimizerVersions.OutputVersion` advances from **37 to 38** because the
-serialized vertex/index order changes and cached optimizer outputs must expire.
+The overdraw threshold remains **1.05f**, allowing up to 5% degradation relative
+to the preceding native cache pass's vertex-cache efficiency. Native wrappers
+validate triangle alignment, vertex/key bounds and key stride before entering
+the native code; the overdraw wrapper also validates finite float3 positions.
+
+On `feature/wh3-asset-host`, the implementation uses the headless
+`GameWorld.MeshOptimizer` library and its existing native resolver. Current
+`PackOptimizerVersions.OutputVersion` is **39**. Version 38 introduced the native
+cache/overdraw order; version 39 adds full-attribute remapping and filtering,
+invalidating cached outputs whose triangle counts may now change.
 
 ## Measured results
 
@@ -159,3 +164,70 @@ No full Optimize Pack benchmarks were repeated and no new packs were generated: 
 On `feature/wh3-asset-host`, **13 focused Release checks passed**: the existing topology/attribute tests, new native-fetch permutation, unused-vertex, immutable-input, empty-buffer, full-16-bit-range and invalid-buffer cases, plus the unchanged golden-output test. Output version **38** and its pinned hash remain unchanged because output was preserved. The native fetch replacement is adopted for its lower preprocessing time and allocation, while preserving the existing mesh output.
 
 Local probe source, per-part results and inventories are under `K:\projects\assedfork\.codex-meshopt\fetch-probe\` and `...\fetch-results\`; test/build/experiment logs are copied into the latter directory.
+
+## Vertex-remap and index-filter experiment (2026-10-31)
+
+Tested the actual meshoptimizer 1.3 `meshopt_generateVertexRemap` and `meshopt_filterIndexBuffer` entrypoints in separate headless probes against production baseline `c3edab531`. At the time of these standalone probes, neither candidate was enabled and the production baseline was output version 38. No new pack files were generated, and full Optimize Pack benchmarks and previously passing production tests were not rerun. Adoption in output version 39 is recorded below.
+
+### Full-attribute vertex remapping
+
+The native remap was supplied with zero-padded keys containing all CommonVertex attributes, bone array lengths/null markers and WeightCount. Signed zero and NaN bit representations were canonicalized to match the actual reflected production comparer. Oversized keys were rejected rather than truncated.
+
+| Pack | Remap mesh parts (raw source / saved generated) | Managed unique vertices | Native unique vertices | Managed prototype | Native prototype including key packing | Allocated, managed → native |
+|---|---:|---:|---:|---:|---:|---:|
+| TEB | 2,458 (371 / 2,087) | 2,281,317 | 2,281,317 | 1074.7 ms | 425.2 ms | 141.81 → 317.82 MiB |
+| Albion | 970 (736 / 234) | 1,766,812 | 1,766,812 | 1050.4 ms | 334.3 ms | 116.56 → 261.77 MiB |
+
+Both corpora had zero unique-count, equivalence-group, representative-payload or unused-map-entry mismatches. Every native remap array and remapped index sequence exactly matched the managed result. Native remapping ran 2.53× as fast on TEB and 3.14× as fast on Albion in this prototype, with roughly **2.25× the cumulative allocations**. These are summed per-mesh, single-pass prototype measurements after a small warm-up. Native timing includes key construction and index marshalling; it is not a whole-pack runtime measurement or a peak-memory measurement. The prototype returns remap tables for comparison and does not benchmark a fully integrated production replacement.
+
+The remap corpus uses original source geometry where a selected path exists in the source pack, otherwise the saved generated geometry. Original source meshes precede merging/repacking; saved generated meshes already passed existing deduplication. This tests 2,458 TEB and 970 Albion mesh parts, not an exact capture of every generated model immediately before production deduplication.
+
+### Remapping the serialized vertex bytes
+
+A separate diagnostic used `VertexFactory.Save` and the actual format/version stride to encode every saved optimized vertex, then called native remapping on those bytes. It introduced **zero additional welds beyond the current comparer** and no equivalence-group differences in all 2,428 TEB / 902 Albion parts. All **15,852,630** triangle-corner byte comparisons matched their remap representatives.
+
+The loaded TEB output contains 90 aliases that both strategies can detect after serialization, worth 2,720 vertex bytes if compacted; Albion has none. This small post-serialization opportunity is not specific to native remapping. The diagnostic used save-format roundtrips, not hand-parsed slices of the original pack.
+
+### Triangle filtering on the saved optimized meshes
+
+The conservative candidate compared complete vertex attributes, preserving UVs, normals, skinning and all other vertex distinctions. Position-only filtering was tested separately as a diagnostic.
+
+| Pack | Parts affected | Triangles before → after | Duplicate triangles removed | Degenerates removed | Uncompressed index bytes saved |
+|---|---:|---:|---:|---:|---:|
+| TEB | 164 | 2,742,092 → 2,705,811 | 36,281 | 0 | 217,686 (212.58 KiB) |
+| Albion | 112 | 2,542,118 → 2,494,010 | 47,884 | 224 | 288,648 (281.88 KiB) |
+
+This removes **1.32%** of TEB triangles and **1.89%** of Albion triangles. No vertices became newly unreferenced, so these filtering results add no vertex-payload saving. Surviving full-payload triangles exactly matched the expected oriented sequence, including retained reverse-winding counterparts; there were zero filter-output mismatches. The byte savings above describe ushort index payloads, not measured compressed pack-size or FPS changes.
+
+Position-only filtering discarded **474 additional TEB triangles** and **30,095 additional Albion triangles** compared with full-attribute filtering. It made 90 / 13,554 vertices newly unused. Such removals disregard UV, normal and bone-weight differences; the synthetic tests explicitly demonstrate removal of distinct skinned/UV geometry. Position-only filtering is not adopted.
+
+All parts affected by conservative filtering were RMV material type `weighted` with embedded shader `default_dry` (164 TEB and 112 Albion parts). This is not a verified opaque-material gate: WSModel assignments may override those shaders and were not evaluated by the probes. Duplicate blended surfaces can intentionally accumulate opacity. Filtering therefore cannot inherit the previous triangle-multiplicity/visual-equivalence claim. No in-game render comparison was performed.
+
+### Validation and artifacts
+
+The main probe passed **34 synthetic checks**, covering production comparer semantics for signed zero/NaNs, null versus empty arrays, UV/bone distinctions, empty/invalid inputs, key bounds, degenerates, exact/cyclic duplicates and reverse winding. The separate packed-byte remap self-test also passed. Each probe built with zero warnings/errors; each corpus was run once per diagnostic, with no reported parse, key-coverage, remap or filter failures. Production code and source/output packs were left unchanged.
+
+Local source projects: `K:\projects\assedfork\.codex-meshopt\remap-filter-probe\` and `...\packed-remap-probe\`. Per-part JSON reports, summaries, inventories/scope requests and logs are under `...\remap-filter-results\`. Existing saved experiment packs and their original input identities are recorded in the earlier sections.
+
+## Native remapping and filtering adopted (OutputVersion 39)
+
+The production geometry pass now executes both native functions using the same canonical full-attribute keys tested above. It generates the old-to-new vertex map, filters original indices against those keys, applies the map to surviving indices, and then runs cache/overdraw/fetch optimization. This avoids constructing a second deduplicated key buffer. No position-only or Multi filtering is enabled.
+
+Triangle count may decrease. The report includes **Triangles removed by geometry optimisation**; vertex accounting includes vertices made unused by filtering. Structural mesh-merge topology invariants remain strict before the geometry pass. Empty parts retain their material/part slot; the rigid reader now accepts a valid zero-vertex/zero-index section without dividing by zero and rejects contradictory empty-section headers.
+
+All **24 focused Release checks were validated**, including full-payload preservation, signed-zero/NaN and null/empty-array semantics, reverse winding, unused vertices, full 16-bit indices, invalid inputs, empty meshes, empty-part save/reload and output version 39. The first run passed 23 checks; one test incorrectly expected an unreferenced duplicate to be mapped. Its fixture was corrected to reference both duplicates and leave a separate unused vertex, and only that test was rerun successfully. No production code needed changing for that fixture.
+
+Output version **39** retains golden hash `16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B`: the fixed golden grid has no removable faces, so its bytes remain unchanged. Entries 1–38 are preserved. The version still advances because real pack output changes.
+
+A validation-only corpus run applied the actual production optimizer to all saved selected parts, independently compared the surviving oriented full-payload triangles with the earlier filter results, checked vertex-removal accounting, and serialized/reloaded every rigid using ModelFactory:
+
+| Pack | Rigid roundtrips | Mesh parts | Vertices before → after | Triangles removed | Validation errors |
+|---|---:|---:|---:|---:|---:|
+| TEB | 164 | 2,428 | 2,280,719 → 2,280,629 | 36,281 | 0 |
+| Albion | 55 | 902 | 1,766,660 → 1,766,660 | 48,108 | 0 |
+
+All 219 rigid roundtrips and 3,330 parts retained the expected part/material assignments and valid indices. TEB’s 90 removed vertices are the post-serialization aliases noted above; Albion’s vertex count was unchanged. These runs validate integration and serialization, not whole-pack performance. No full pack benchmark was repeated and no new pack was written; prototype timings above are not measurements of the integrated version-39 pipeline.
+
+Full-attribute matching protects UV, normal and skinning distinctions. Removing duplicated blended surfaces can still alter opacity; no in-game visual-equivalence claim is made. The filtering behavior is now enabled as part of the geometry option.
+
+Validation probe source and results are retained locally under `K:\projects\assedfork\.codex-meshopt\remap-filter-validation\` and `...\remap-filter-results\`, including the two `*-production-validation.json` reports and test logs.

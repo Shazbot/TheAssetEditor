@@ -1,7 +1,6 @@
 using System.Numerics;
 using GameWorld.MeshOptimizer;
 using Shared.GameFormats.RigidModel;
-using Shared.GameFormats.RigidModel.Types;
 using Shared.GameFormats.RigidModel.Vertex;
 
 namespace Editors.PackOptimizer.Core
@@ -18,82 +17,115 @@ namespace Editors.PackOptimizer.Core
     {
         public static GeometryOptimizationStatistics Optimize(RmvModel model)
         {
-            var verticesBefore = model.Mesh.VertexList.Length;
-            var indicesBefore = model.Mesh.IndexList.Length;
+            ArgumentNullException.ThrowIfNull(model);
 
-            if (model.Mesh.IndexList.Length % 3 != 0)
+            var sourceVertices = model.Mesh.VertexList;
+            var sourceIndices = model.Mesh.IndexList;
+            var verticesBefore = sourceVertices.Length;
+            var indicesBefore = sourceIndices.Length;
+            if (indicesBefore % 3 != 0)
                 throw new InvalidOperationException("Mesh index buffer length is not divisible by three.");
 
-            // Preserve every source triangle, including degenerate/zero-area triangles.
-            // They are part of the source topology and can be significant to downstream
-            // tooling even when they rasterize no pixels. The optimizer may deduplicate
-            // identical vertex payloads and reorder triangles for cache locality and
-            // overdraw, but it must never change the index/triangle count.
-            var sourceIndices = model.Mesh.IndexList;
-            var referencedBeforeDedupe = new HashSet<ushort>(sourceIndices);
-            var unreferencedVerticesRemoved = verticesBefore - referencedBeforeDedupe.Count;
-
-            var deduplicatedVertices = new List<CommonVertex>(referencedBeforeDedupe.Count);
-            var vertexMap = new Dictionary<CommonVertex, ushort>(new CommonVertexComparer());
-            var remappedIndices = new ushort[sourceIndices.Length];
-
+            var referencedBeforeDedupe = new HashSet<ushort>();
             for (var i = 0; i < sourceIndices.Length; i++)
             {
-                var oldIndex = sourceIndices[i];
-                if (oldIndex >= model.Mesh.VertexList.Length)
-                    throw new InvalidOperationException($"Mesh contains invalid vertex index {oldIndex}.");
-
-                var vertex = model.Mesh.VertexList[oldIndex];
-                if (!vertexMap.TryGetValue(vertex, out var newIndex))
-                {
-                    if (deduplicatedVertices.Count > ushort.MaxValue)
-                        throw new InvalidOperationException("Optimized mesh exceeds the 16-bit vertex index limit.");
-
-                    newIndex = checked((ushort)deduplicatedVertices.Count);
-                    vertexMap.Add(vertex, newIndex);
-                    deduplicatedVertices.Add(vertex);
-                }
-
-                remappedIndices[i] = newIndex;
+                var index = sourceIndices[i];
+                if (index >= verticesBefore)
+                    throw new InvalidOperationException($"Mesh contains invalid vertex index {index}.");
+                referencedBeforeDedupe.Add(index);
             }
 
-            var duplicateVerticesRemoved =
-                referencedBeforeDedupe.Count - deduplicatedVertices.Count;
+            var vertexKeys = CommonVertexNativeKeyEncoder.Encode(sourceVertices);
+            var vertexRemap = MeshOptTriangleOrderOptimizer.GenerateVertexRemap(
+                sourceIndices,
+                vertexKeys.Bytes,
+                verticesBefore,
+                vertexKeys.Stride);
+            var duplicateVerticesRemoved = referencedBeforeDedupe.Count - vertexRemap.UniqueVertexCount;
+            if (duplicateVerticesRemoved < 0)
+                throw new InvalidOperationException("Native vertex remap returned more unique vertices than were referenced.");
 
-            var vertexPositions = new float[checked(deduplicatedVertices.Count * 3)];
-            for (var vertexIndex = 0; vertexIndex < deduplicatedVertices.Count; vertexIndex++)
+            var remappedVertices = new CommonVertex[vertexRemap.UniqueVertexCount];
+            var hasRepresentative = new bool[vertexRemap.UniqueVertexCount];
+            foreach (var sourceIndex in sourceIndices)
             {
-                var position = deduplicatedVertices[vertexIndex].Position;
+                var remappedIndex = vertexRemap.OldToNew[sourceIndex];
+                if (remappedIndex == uint.MaxValue || remappedIndex >= (uint)remappedVertices.Length || remappedIndex > ushort.MaxValue)
+                    throw new InvalidOperationException("Native vertex remap returned an invalid vertex for a referenced index.");
+
+                var compactedIndex = (int)remappedIndex;
+                if (!hasRepresentative[compactedIndex])
+                {
+                    remappedVertices[compactedIndex] = sourceVertices[sourceIndex];
+                    hasRepresentative[compactedIndex] = true;
+                }
+            }
+
+            if (hasRepresentative.Any(found => !found))
+                throw new InvalidOperationException("Native vertex remap returned a unique vertex with no referenced representative.");
+
+            // Filtering runs on the original full-payload keys so redundant faces are
+            // identified before the vertex remap is applied to their surviving indices.
+            // Removing repeated faces can change opacity accumulation for blended
+            // materials; this model-level pass has no WSModel material classification.
+            var filteredSourceIndices = MeshOptTriangleOrderOptimizer.FilterIndexBuffer(
+                sourceIndices,
+                vertexKeys.Bytes,
+                verticesBefore,
+                vertexKeys.Stride);
+            if (filteredSourceIndices.Length > indicesBefore || filteredSourceIndices.Length % 3 != 0)
+                throw new InvalidOperationException("Native triangle filtering returned an invalid index count.");
+
+            var remappedFilteredIndices = new ushort[filteredSourceIndices.Length];
+            for (var i = 0; i < filteredSourceIndices.Length; i++)
+            {
+                var remappedIndex = vertexRemap.OldToNew[filteredSourceIndices[i]];
+                if (remappedIndex == uint.MaxValue || remappedIndex >= (uint)remappedVertices.Length || remappedIndex > ushort.MaxValue)
+                    throw new InvalidOperationException("Native vertex remap returned an invalid vertex for a surviving triangle.");
+                remappedFilteredIndices[i] = (ushort)remappedIndex;
+            }
+
+            var vertexPositions = new float[checked(remappedVertices.Length * 3)];
+            for (var vertexIndex = 0; vertexIndex < remappedVertices.Length; vertexIndex++)
+            {
+                var position = remappedVertices[vertexIndex].Position;
                 var positionOffset = vertexIndex * 3;
                 vertexPositions[positionOffset] = position.X;
                 vertexPositions[positionOffset + 1] = position.Y;
                 vertexPositions[positionOffset + 2] = position.Z;
             }
 
-            // Overdraw ordering is geometric and can change alpha-blended appearance.
-            // This model-level optimizer has no WSModel shader assignment to classify it.
+            // This model-level optimizer has no WSModel shader assignment to classify
+            // alpha blending, so the existing geometric overdraw-ordering risk remains.
             var cacheAndOverdrawOptimizedIndices =
                 MeshOptTriangleOrderOptimizer.OptimizeVertexCacheAndOverdraw(
-                    remappedIndices,
+                    remappedFilteredIndices,
                     vertexPositions);
 
             var vertexFetchResult = MeshOptTriangleOrderOptimizer.OptimizeVertexFetch(
                 cacheAndOverdrawOptimizedIndices,
-                deduplicatedVertices.Count);
+                remappedVertices.Length);
             var reorderedVertices = new CommonVertex[vertexFetchResult.SourceVertexIndices.Length];
             for (var vertexIndex = 0; vertexIndex < reorderedVertices.Length; vertexIndex++)
             {
                 var sourceVertexIndex = vertexFetchResult.SourceVertexIndices[vertexIndex];
-                reorderedVertices[vertexIndex] = deduplicatedVertices[sourceVertexIndex];
+                if ((uint)sourceVertexIndex >= (uint)remappedVertices.Length)
+                    throw new InvalidOperationException("Native vertex fetch returned an invalid source vertex.");
+                reorderedVertices[vertexIndex] = remappedVertices[sourceVertexIndex];
             }
 
             var reorderedIndices = vertexFetchResult.Indices;
-
-            if (reorderedIndices.Length != indicesBefore)
+            if (reorderedIndices.Length > indicesBefore || reorderedIndices.Length % 3 != 0)
+                throw new InvalidOperationException("Geometry optimization returned an invalid index count.");
+            foreach (var index in reorderedIndices)
             {
-                throw new InvalidOperationException(
-                    $"Geometry optimization changed the index count from {indicesBefore} to {reorderedIndices.Length}.");
+                if (index >= reorderedVertices.Length)
+                    throw new InvalidOperationException("Geometry optimization returned an index outside the compacted vertex array.");
             }
+
+            var unreferencedVerticesRemoved = verticesBefore - reorderedVertices.Length - duplicateVerticesRemoved;
+            if (unreferencedVerticesRemoved < 0)
+                throw new InvalidOperationException("Geometry optimization reported more vertices removed than existed in the input.");
 
             model.Mesh.VertexList = reorderedVertices;
             model.Mesh.IndexList = reorderedIndices;
@@ -105,66 +137,6 @@ namespace Editors.PackOptimizer.Core
                 reorderedIndices.Length,
                 duplicateVerticesRemoved,
                 unreferencedVerticesRemoved);
-        }
-
-        private sealed class CommonVertexComparer : IEqualityComparer<CommonVertex>
-        {
-            public bool Equals(CommonVertex? x, CommonVertex? y)
-            {
-                if (ReferenceEquals(x, y))
-                    return true;
-                if (x is null || y is null)
-                    return false;
-
-                return x.Position.Equals(y.Position) &&
-                       x.Normal.Equals(y.Normal) &&
-                       x.BiNormal.Equals(y.BiNormal) &&
-                       x.Tangent.Equals(y.Tangent) &&
-                       x.Uv.Equals(y.Uv) &&
-                       x.Uv1.Equals(y.Uv1) &&
-                       x.Colour.Equals(y.Colour) &&
-                       SequenceEqual(x.BoneIndex, y.BoneIndex) &&
-                       SequenceEqual(x.BoneWeight, y.BoneWeight) &&
-                       x.WeightCount == y.WeightCount;
-            }
-
-            public int GetHashCode(CommonVertex obj)
-            {
-                var hash = new HashCode();
-                hash.Add(obj.Position);
-                hash.Add(obj.Normal);
-                hash.Add(obj.BiNormal);
-                hash.Add(obj.Tangent);
-                hash.Add(obj.Uv);
-                hash.Add(obj.Uv1);
-                hash.Add(obj.Colour);
-                AddSequence(ref hash, obj.BoneIndex);
-                AddSequence(ref hash, obj.BoneWeight);
-                hash.Add(obj.WeightCount);
-                return hash.ToHashCode();
-            }
-
-            private static bool SequenceEqual<T>(T[]? left, T[]? right)
-            {
-                if (ReferenceEquals(left, right))
-                    return true;
-                if (left == null || right == null)
-                    return false;
-                return left.AsSpan().SequenceEqual(right);
-            }
-
-            private static void AddSequence<T>(ref HashCode hash, T[]? values)
-            {
-                if (values == null)
-                {
-                    hash.Add(-1);
-                    return;
-                }
-
-                hash.Add(values.Length);
-                foreach (var value in values)
-                    hash.Add(value);
-            }
         }
     }
 }
