@@ -3391,24 +3391,35 @@ namespace Editors.PackOptimizer.Core
         private static bool HasSharedRepackDirectRigidReference(XmlDocument document, string rigidPath)
             => FindSharedRepackDirectRigidReferenceNodes(document, rigidPath).Count != 0;
 
-        private static List<XmlNode> FindSharedRepackDirectRigidReferenceNodes(XmlDocument document, string rigidPath)
+        private static List<(XmlNode Node, string? AttributeName)> FindSharedRepackDirectRigidReferenceNodes(
+            XmlDocument document,
+            string rigidPath)
         {
-            var nodes = new List<XmlNode>();
+            var nodes = new List<(XmlNode Node, string? AttributeName)>();
             foreach (XmlNode node in document.SelectNodes("//*[@model]") ?? EmptyXmlNodeList)
             {
                 if (node is XmlElement element &&
                     Normalize(element.GetAttribute("model")).Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    nodes.Add(element);
+                    nodes.Add((element, "model"));
+                }
+            }
+
+            foreach (XmlNode node in document.SelectNodes("//*[@imposter_model]") ?? EmptyXmlNodeList)
+            {
+                if (node is XmlElement element &&
+                    Normalize(element.GetAttribute("imposter_model")).Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    nodes.Add((element, "imposter_model"));
                 }
             }
 
             foreach (XmlNode node in document.SelectNodes("//*[self::rigid or self::model]") ?? EmptyXmlNodeList)
             {
                 if (Normalize(node.InnerText).Equals(rigidPath, StringComparison.OrdinalIgnoreCase) &&
-                    !nodes.Contains(node))
+                    !nodes.Any(reference => ReferenceEquals(reference.Node, node)))
                 {
-                    nodes.Add(node);
+                    nodes.Add((node, null));
                 }
             }
 
@@ -3420,12 +3431,11 @@ namespace Editors.PackOptimizer.Core
             string rigidPath,
             string clonePath)
         {
-            foreach (var node in FindSharedRepackDirectRigidReferenceNodes(document, rigidPath))
+            foreach (var (node, attributeName) in FindSharedRepackDirectRigidReferenceNodes(document, rigidPath))
             {
-                if (node is XmlElement element && element.HasAttribute("model") &&
-                    Normalize(element.GetAttribute("model")).Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                if (attributeName != null && node is XmlElement element)
                 {
-                    element.SetAttribute("model", clonePath);
+                    element.SetAttribute(attributeName, clonePath);
                 }
                 else
                 {

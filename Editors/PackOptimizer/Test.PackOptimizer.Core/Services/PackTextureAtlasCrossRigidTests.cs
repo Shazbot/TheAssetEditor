@@ -42,6 +42,75 @@ namespace Test.PackOptimizer.Core
                        $"PackTextureAtlasBatchService.{name} was not found.");
         }
 
+        private static bool HasDirectRigidReference(XmlDocument document, string rigidPath)
+            => (bool)GetStaticMethod("HasSharedRepackDirectRigidReference")
+                .Invoke(null, [document, rigidPath])!;
+
+        private static void RepointDirectRigidReferences(
+            XmlDocument document,
+            string rigidPath,
+            string clonePath)
+            => GetStaticMethod("RepointSharedRepackDirectRigidReferences")
+                .Invoke(null, [document, rigidPath, clonePath]);
+
+        [Test]
+        public void SharedRepackDirectRigidReferences_RepointPrimaryAndImposterTargetsIndependently()
+        {
+            const string horseA = "VariantMeshes/wh_variantmodels/hr1/emp/emp_warhorse/emp_warhorse_a_1.rigid_model_v2";
+            const string horseB = "VariantMeshes/wh_variantmodels/hr1/emp/emp_warhorse/emp_warhorse_b_1.rigid_model_v2";
+            const string horseAPath = @"variantmeshes\wh_variantmodels\hr1\emp\emp_warhorse\emp_warhorse_a_1.rigid_model_v2";
+            const string horseBPath = @"variantmeshes\wh_variantmodels\hr1\emp\emp_warhorse\emp_warhorse_b_1.rigid_model_v2";
+            const string horseABackslash = @"VariantMeshes\wh_variantmodels\hr1\emp\emp_warhorse\emp_warhorse_a_1.rigid_model_v2";
+            const string horseAClone = @"variantmeshes\shared_texture_repack\horse_a.rigid_model_v2";
+            const string horseBClone = @"variantmeshes\shared_texture_repack\horse_b.rigid_model_v2";
+            var document = new XmlDocument();
+            document.LoadXml(
+                "<root><VARIANT_MESH model=\"" + horseA + "\" imposter_model=\"" + horseA + "\">" +
+                "<META_DATA>metadata stays intact</META_DATA></VARIANT_MESH>" +
+                "<VARIANT_MESH model=\"" + horseB + "\" imposter_model=\"" + horseABackslash + "\"/>" +
+                "<rigid>" + horseB + "</rigid></root>");
+
+            Assert.That(HasDirectRigidReference(document, horseAPath), Is.True);
+            Assert.That(HasDirectRigidReference(document, horseBPath), Is.True);
+            RepointDirectRigidReferences(document, horseAPath, horseAClone);
+            Assert.That(HasDirectRigidReference(document, horseAPath), Is.False);
+            Assert.That(HasDirectRigidReference(document, horseBPath), Is.True);
+            RepointDirectRigidReferences(document, horseBPath, horseBClone);
+
+            var meshes = document.SelectNodes("//VARIANT_MESH")!.Cast<XmlElement>().ToArray();
+            Assert.That(meshes[0].GetAttribute("model"), Is.EqualTo(horseAClone));
+            Assert.That(meshes[0].GetAttribute("imposter_model"), Is.EqualTo(horseAClone));
+            Assert.That(meshes[1].GetAttribute("model"), Is.EqualTo(horseBClone));
+            Assert.That(meshes[1].GetAttribute("imposter_model"), Is.EqualTo(horseAClone),
+                "the horse-B entry's imposter still names horse A and must follow horse A's clone");
+            Assert.That(document.SelectSingleNode("/root/VARIANT_MESH[1]/META_DATA")!.InnerText,
+                Is.EqualTo("metadata stays intact"));
+            Assert.That(document.SelectSingleNode("/root/rigid")!.InnerText, Is.EqualTo(horseBClone));
+            Assert.That(HasDirectRigidReference(document, horseAPath), Is.False);
+            Assert.That(HasDirectRigidReference(document, horseBPath), Is.False);
+        }
+
+        [Test]
+        public void SharedRepackDirectRigidReferences_RecognizeImposterOnlyReferences()
+        {
+            const string original = "VariantMeshes/props/imposter.rigid_model_v2";
+            const string originalPath = @"variantmeshes\props\imposter.rigid_model_v2";
+            const string clone = @"variantmeshes\shared_texture_repack\imposter.rigid_model_v2";
+            var document = new XmlDocument();
+            document.LoadXml(
+                "<root><VARIANT_MESH imposter_model=\"" + original + "\">" +
+                "<META_DATA>nested metadata stays intact</META_DATA></VARIANT_MESH></root>");
+
+            Assert.That(HasDirectRigidReference(document, originalPath), Is.True);
+            RepointDirectRigidReferences(document, originalPath, clone);
+
+            var mesh = (XmlElement)document.SelectSingleNode("/root/VARIANT_MESH")!;
+            Assert.That(mesh.HasAttribute("model"), Is.False);
+            Assert.That(mesh.GetAttribute("imposter_model"), Is.EqualTo(clone));
+            Assert.That(mesh.SelectSingleNode("META_DATA")!.InnerText, Is.EqualTo("nested metadata stays intact"));
+            Assert.That(HasDirectRigidReference(document, originalPath), Is.False);
+        }
+
         private static RmvFile CreateRigid(
             int modelListLength,
             params float[] lodDistances)
