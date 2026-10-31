@@ -11,8 +11,8 @@ through `meshopt_optimizeVertexCache`, `meshopt_optimizeOverdraw`, and
 Full-attribute keys include every CommonVertex field and preserve the existing
 signed-zero, NaN, null-array and array-length equality semantics. Vertex
 representatives retain their complete original payloads. Opposite-winding faces
-and attribute distinctions remain separate. The existing modified-rigid scope,
-geometry-option gate, part count and part order are unchanged.
+and attribute distinctions remain separate. The final geometry pass includes modified rigids and editor-LOD remakes.
+The geometry-option gate, part count and part order are unchanged.
 
 The overdraw threshold remains **1.05f**, allowing up to 5% degradation relative
 to the preceding native cache pass's vertex-cache efficiency. Native wrappers
@@ -21,9 +21,10 @@ the native code; the overdraw wrapper also validates finite float3 positions.
 
 On `feature/wh3-asset-host`, the implementation uses the headless
 `GameWorld.MeshOptimizer` library and its existing native resolver. Current
-`PackOptimizerVersions.OutputVersion` is **39**. Version 38 introduced the native
+`PackOptimizerVersions.OutputVersion` is **40**. Version 38 introduced the native
 cache/overdraw order; version 39 adds full-attribute remapping and filtering,
-invalidating cached outputs whose triangle counts may now change.
+invalidating cached outputs whose triangle counts may now change. Version 40
+extends the final pass to rigids changed only by editor-LOD remaking.
 
 ## Measured results
 
@@ -231,3 +232,35 @@ All 219 rigid roundtrips and 3,330 parts retained the expected part/material ass
 Full-attribute matching protects UV, normal and skinning distinctions. Removing duplicated blended surfaces can still alter opacity; no in-game visual-equivalence claim is made. The filtering behavior is now enabled as part of the geometry option.
 
 Validation probe source and results are retained locally under `K:\projects\assedfork\.codex-meshopt\remap-filter-validation\` and `...\remap-filter-results\`, including the two `*-production-validation.json` reports and test logs.
+
+## Remade-only LOD geometry coverage fixed (OutputVersion 40)
+
+The final geometry input now unions `ModifiedRigids` with
+`EditorLodRemadeRigids`, then removes case-insensitive duplicates. Every selected
+rigid runs remap, full-attribute filtering, cache, overdraw and fetch passes over
+all its LODs and mesh parts. Cross-rigid generated output and other modified
+rigids remain in the selection; unrelated cached source rigids are not added.
+
+Editor-LOD remakes stay outside `ModifiedRigids` while earlier planning,
+repacking and merge gates run. `CommitEditorLodRemadeRigids` remains after final
+geometry optimization, immediately before saving. The existing
+`optimizeGeometry && !crossRigidOnly` guard is unchanged.
+
+This fixes the previous ordering gap: a rigid modified solely by LOD remaking
+was previously committed too late to enter the geometry pass. Output version
+advances from 39 to **40** to expire cached outputs. Golden entry 40 keeps
+`16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B`
+because the fixed fixture does not model the changed batch selection. Historical
+entries 1–39 are preserved.
+
+Four targeted Release cases passed: two new remade-only/overlapping-set cases,
+the existing deferred-planning/LOD-structure regression, and the version-40
+golden output check. The new cases inject a duplicate face into each of four
+LODs and verify one rigid/four meshes processed, with all injected duplicates
+removed. The overlap case proves the same path is optimized only once.
+No full pack benchmarks or unchanged mesh-algorithm suite were rerun.
+
+The fix is based on **5975da7e5**, preserving its external rigid-copy repacking
+changes and tests. Logs are retained locally as
+`K:\projects\assedfork\.codex-meshopt\lod-geometry-fix-tests.log` and
+`...\lod-geometry-coverage-tests.log`.

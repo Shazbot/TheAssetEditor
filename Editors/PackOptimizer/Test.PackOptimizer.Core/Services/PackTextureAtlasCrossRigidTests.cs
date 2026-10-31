@@ -18325,6 +18325,58 @@ namespace Test.PackOptimizer.Core
                 ? skipped
                 : [];
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void EditorLods_RemadeRigid_IsGeometryOptimizedBeforeLateCommit(bool alreadyModified)
+        {
+            var rigid = CreateEditorLodRigid(24);
+            var (_, state, _) = RunEditorLodRemake(rigid);
+            var modified = GetStateProperty<HashSet<string>>(state, "ModifiedRigids");
+            var remade = GetStateProperty<HashSet<string>>(state, "EditorLodRemadeRigids");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(modified, Is.Empty, "remade rigids must remain outside earlier planning gates");
+                Assert.That(remade, Is.EquivalentTo(new[] { EditorLodRigidPath }));
+            });
+
+            if (alreadyModified)
+                modified.Add(EditorLodRigidPath);
+
+            long injectedIndexCount = 0;
+            var indicesBeforeByLod = new int[rigid.ModelList.Length];
+            for (var lodIndex = 0; lodIndex < rigid.ModelList.Length; lodIndex++)
+            {
+                foreach (var model in rigid.ModelList[lodIndex])
+                {
+                    var indices = model.Mesh.IndexList;
+                    Assert.That(indices.Length, Is.GreaterThanOrEqualTo(3), $"LOD {lodIndex} has a face to repeat");
+                    model.Mesh.IndexList = indices.Concat(indices.Take(3)).ToArray();
+                    indicesBeforeByLod[lodIndex] += model.Mesh.IndexList.Length;
+                    injectedIndexCount += model.Mesh.IndexList.Length;
+                }
+            }
+
+            InvokeStaticServiceMethod("OptimizeGeometry", state, CancellationToken.None, null, null);
+
+            var indicesAfter = rigid.ModelList.Sum(lod => lod.Sum(model => model.Mesh.IndexList.Length));
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetStateProperty<int>(state, "GeometryRigidsOptimized"), Is.EqualTo(1));
+                Assert.That(GetStateProperty<int>(state, "GeometryMeshesOptimized"), Is.EqualTo(4));
+                Assert.That(GetStateProperty<long>(state, "GeometryIndicesBefore"), Is.EqualTo(injectedIndexCount));
+                Assert.That(GetStateProperty<long>(state, "GeometryIndicesAfter"), Is.EqualTo(indicesAfter));
+                Assert.That(indicesAfter, Is.LessThanOrEqualTo(injectedIndexCount - 12));
+                for (var lodIndex = 0; lodIndex < rigid.ModelList.Length; lodIndex++)
+                {
+                    var after = rigid.ModelList[lodIndex].Sum(model => model.Mesh.IndexList.Length);
+                    Assert.That(after, Is.LessThan(indicesBeforeByLod[lodIndex]), $"LOD {lodIndex} duplicate face is filtered");
+                }
+
+                Assert.That(modified, Is.EquivalentTo(new[] { EditorLodRigidPath }));
+            });
+        }
+
         [Test]
         public void EditorLods_DetectedRigid_IsRemadeFromLod0AndKeepsItsStructure()
         {
@@ -19216,6 +19268,9 @@ namespace Test.PackOptimizer.Core
             // 39: full-payload deduplication plus redundant-triangle filtering. The golden geometry
             // fixture contains no degenerate or repeated faces, so its output hash is unchanged.
             [39] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 40: editor-LOD-only remakes now reach the geometry optimization stage after planning.
+            // The golden fixture does not model BatchState selection, so its output hash is unchanged.
+            [40] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()

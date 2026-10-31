@@ -435,10 +435,10 @@ namespace Editors.PackOptimizer.Core
             IProgress<TextureAtlasPackProgress>? progress,
             IEnumerable<string>? additionalRigidPaths = null)
         {
-            // Rigids rewritten by atlasing or merging are always optimized. The
-            // no-atlas run also passes its own selection of otherwise unmodified
-            // rigids; those only become written files once optimized.
+            // Include editor-LOD remakes even though they stay out of ModifiedRigids
+            // until the later commit point, so they do not affect earlier planning gates.
             var rigidPaths = state.ModifiedRigids
+                .Concat(state.EditorLodRemadeRigids)
                 .Concat(additionalRigidPaths ?? [])
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -497,6 +497,8 @@ namespace Editors.PackOptimizer.Core
         // and order, so WSModel material indices and direct VMD references stay
         // valid; it may remove faces that become full-payload-degenerate or duplicate
         // in the same winding, then reorder and compact geometry inside each part.
+        // Editor-LOD remakes are added separately by OptimizeGeometry and stay apart
+        // from ModifiedRigids until the geometry pass has completed.
         // Cloth model types are left alone
         // because nothing here shows that their vertex order is free to change,
         // and a rigid whose index buffers the optimizer would reject is skipped

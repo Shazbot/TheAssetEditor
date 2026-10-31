@@ -1016,3 +1016,13 @@ errors. All 24 focused Release checks were validated; full pack benchmarks
 were not repeated. See [Meshoptimizer findings](MESHOPT_FINDINGS.md) for the
 single-pass prototype timings, increased remap allocations and blended-surface
 appearance caveat. Output version 39 expires cached outputs.
+
+## Remade-only LOD geometry coverage (OutputVersion 40)
+
+The geometry pass now includes editor-LOD remakes as well as the modified
+rigids from merging/repacking/atlasing, deduplicating overlapping paths. Remakes
+remain separate during planning and join the geometry input only at the final
+pass; every selected rigid's LODs and parts run all five native passes. Four
+targeted cases passed, including four-LOD filtering and overlap processing.
+The fix preserves commit 5975da7e5's external rigid-copy work; full pack
+benchmarks were not repeated. See [Meshoptimizer findings](MESHOPT_FINDINGS.md).

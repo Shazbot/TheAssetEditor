@@ -748,11 +748,11 @@ namespace Editors.PackOptimizer.Core
                 if (optimizeGeometry && !crossRigidOnly)
                 {
                     phaseStopwatch.Restart();
-                    // Only rigids already rewritten by a merge, an atlas or a
-                    // cross-rigid payload are optimized. Extending this to every
-                    // source-owned gameplay rigid (SelectNoAtlasGeometryOptimizationRigids)
-                    // re-saved 353 extra rigids on the reference pack for 0.5 % fewer
-                    // vertices, so it is not used.
+                    // Optimize rigids rewritten by merge, atlas or cross-rigid stages,
+                    // plus editor-LOD remakes tracked separately until this pass ends.
+                    // Extending this to every source-owned gameplay rigid
+                    // (SelectNoAtlasGeometryOptimizationRigids) re-saved 353 extra
+                    // rigids on the reference pack for 0.5 % fewer vertices, so it is not used.
                     OptimizeGeometry(
                         state,
                         cancellationToken,
