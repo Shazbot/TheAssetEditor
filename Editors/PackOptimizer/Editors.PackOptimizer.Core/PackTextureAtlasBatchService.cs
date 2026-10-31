@@ -279,6 +279,7 @@ namespace Editors.PackOptimizer.Core
                 state.PhaseDurations["Vanilla atlas consumer cache load"] = cacheLoadStopwatch.Elapsed;
                 state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
                 state.DbSchemaPath = request.DbSchema?.Path;
+                state.DbSchema = request.DbSchema;
 
                 if (request.ModConsumers is { Count: > 0 } modConsumers)
                 {

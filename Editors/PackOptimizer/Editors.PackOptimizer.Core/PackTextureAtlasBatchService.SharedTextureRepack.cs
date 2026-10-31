@@ -1121,6 +1121,8 @@ namespace Editors.PackOptimizer.Core
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ClonedRigidVmdsBySource { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public List<SharedRepackDbRigidReferenceRewrite> RewrittenDbRigidReferences { get; } = [];
+            public List<SharedRepackDbRigidReferenceSkip> DbRigidReferenceRewriteSkips { get; } = [];
             // Textures still used by immutable external consumers of an original rigid/WSModel.
             public HashSet<string> CloneProtectedTextures { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> EmbeddedRewrittenRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -1148,6 +1150,18 @@ namespace Editors.PackOptimizer.Core
             public List<string> OwnedStillPresent { get; } = [];
             public bool Finalized { get; set; }
         }
+
+        private sealed record SharedRepackDbRigidReferenceRewrite(
+            string TablePath,
+            string RowKey,
+            string SourceRigid,
+            string CloneRigid);
+
+        private sealed record SharedRepackDbRigidReferenceSkip(
+            string TablePath,
+            string RowKey,
+            string SourceRigid,
+            string Reason);
 
         private sealed class SharedRepackAttemptReportSnapshot
         {
@@ -1824,6 +1838,7 @@ namespace Editors.PackOptimizer.Core
                 .ToList();
             result.SetsConsidered = decisions.Count;
             var containers = GetGameplayTraversalContainers(state);
+            BuildSharedRepackDbRigidConsumerIndex(state, containers, cancellationToken);
 
             // Shared lookups, built once.
             var partBindings = new Dictionary<(string Rigid, int Lod, int Part), List<SourceWsModelBinding>>();
@@ -2817,6 +2832,312 @@ namespace Editors.PackOptimizer.Core
             return null;
         }
 
+        private static void BuildSharedRepackDbRigidConsumerIndex(
+            BatchState state,
+            IReadOnlyList<IPackFileContainer> gameplayContainers,
+            CancellationToken cancellationToken)
+        {
+            state.SharedRepackDbRigidConsumersByPath.Clear();
+            state.SharedRepackDbOpaqueTables.Clear();
+            state.SharedRepackDbOpaqueTableText.Clear();
+            state.SharedRepackHigherPriorityDbKeysByTable.Clear();
+            state.SharedRepackUnreadableHigherPriorityDbTables.Clear();
+
+            var higherPriorityContainers = state.Consumers?.Packs
+                .Where(pack => !pack.BelowSource)
+                .Select(pack => pack.Container)
+                .ToHashSet<IPackFileContainer>(ReferenceEqualityComparer.Instance) ??
+                new HashSet<IPackFileContainer>(ReferenceEqualityComparer.Instance);
+            var containers = gameplayContainers
+                .Where(container => container.IsCaPackFile)
+                .Append(state.Source)
+                .Concat(state.Consumers?.Packs.Select(pack => pack.Container) ?? [])
+                .Distinct<IPackFileContainer>(ReferenceEqualityComparer.Instance)
+                .ToArray();
+
+            foreach (var spec in Wh3UnitCategoryResolver.SourceRigidReferenceTables)
+            {
+                var directory = $"db\\{spec.TableName}";
+                foreach (var container in containers)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    IReadOnlyList<(string Path, PackFile File)> tableFiles;
+                    try
+                    {
+                        tableFiles = container.GetDirectoryContent(directory) ?? [];
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        if (higherPriorityContainers.Contains(container))
+                            state.SharedRepackUnreadableHigherPriorityDbTables.Add(spec.TableName);
+                        continue;
+                    }
+
+                    foreach (var (rawPath, file) in tableFiles)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var tablePath = Normalize(rawPath);
+                        byte[] data;
+                        try
+                        {
+                            data = file.DataSource.ReadData();
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            if (higherPriorityContainers.Contains(container))
+                                state.SharedRepackUnreadableHigherPriorityDbTables.Add(spec.TableName);
+                            AddOpaque(ex.GetType().Name + ": " + ex.Message);
+                            continue;
+                        }
+
+                        if (!Wh3UnitCategoryResolver.TryDecodeSourceRigidReferenceRows(
+                                spec.TableName, data, tablePath, state.DbSchema, out var rows, out var failure))
+                        {
+                            if (higherPriorityContainers.Contains(container))
+                                state.SharedRepackUnreadableHigherPriorityDbTables.Add(spec.TableName);
+                            AddOpaque(failure ?? "the registered DB row layout could not be decoded");
+                            continue;
+                        }
+
+                        var isHigherPriority = higherPriorityContainers.Contains(container);
+                        foreach (var row in rows)
+                        {
+                            var key = row.GetValueOrDefault(spec.KeyField) ?? string.Empty;
+                            if (isHigherPriority && key.Length != 0)
+                            {
+                                if (!state.SharedRepackHigherPriorityDbKeysByTable.TryGetValue(
+                                        spec.TableName, out var keys))
+                                {
+                                    keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                    state.SharedRepackHigherPriorityDbKeysByTable[spec.TableName] = keys;
+                                }
+
+                                keys.Add(key);
+                            }
+
+                            var rigidPath = Normalize(row.GetValueOrDefault(spec.PathField) ?? string.Empty);
+                            if (rigidPath.Length == 0 ||
+                                !rigidPath.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            if (!state.SharedRepackDbRigidConsumersByPath.TryGetValue(rigidPath, out var consumers))
+                            {
+                                consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                state.SharedRepackDbRigidConsumersByPath[rigidPath] = consumers;
+                            }
+
+                            consumers.Add(ReferenceEquals(container, state.Source)
+                                ? tablePath
+                                : $"[{GetSharedRepackDbPackName(container)}] {tablePath}");
+                        }
+
+                        void AddOpaque(string reason)
+                            => state.SharedRepackDbOpaqueTables.Add((
+                                container, GetSharedRepackDbPackName(container), tablePath, reason));
+                    }
+                }
+            }
+        }
+
+        private static string GetSharedRepackDbPackName(IPackFileContainer container)
+            => !string.IsNullOrWhiteSpace(container.Name)
+                ? container.Name
+                : Path.GetFileNameWithoutExtension(container.SystemFilePath ?? string.Empty);
+
+        private static bool SharedRepackOpaqueDbTableMentionsRigid(
+            BatchState state,
+            (IPackFileContainer Container, string PackName, string TablePath, string Reason) opaque,
+            string rigidPath)
+        {
+            var cacheKey = opaque.PackName + "\n" + opaque.TablePath;
+            if (!state.SharedRepackDbOpaqueTableText.TryGetValue(cacheKey, out var text))
+            {
+                text = string.Empty;
+                try
+                {
+                    var data = opaque.Container.FindFile(opaque.TablePath)?.DataSource.ReadData();
+                    if (data != null)
+                        text = Encoding.Latin1.GetString(data) + "\n" + Encoding.Unicode.GetString(data);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                }
+
+                state.SharedRepackDbOpaqueTableText[cacheKey] = text;
+            }
+
+            var normalized = Normalize(rigidPath);
+            return normalized.Length != 0 &&
+                   (text.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
+                    text.Contains(normalized.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void PrepareSharedRepackDbRigidReferenceRewrites(
+            BatchState state,
+            string sourceRigid,
+            string cloneRigid,
+            Dictionary<string, byte[]> pendingTableBytes,
+            List<SharedRepackDbRigidReferenceRewrite> rewrites,
+            List<SharedRepackDbRigidReferenceSkip> skips,
+            CancellationToken cancellationToken)
+        {
+            sourceRigid = Normalize(sourceRigid);
+            cloneRigid = Normalize(cloneRigid);
+            foreach (var spec in Wh3UnitCategoryResolver.SourceRigidReferenceTables)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var directory = $"db\\{spec.TableName}";
+                List<(string Path, byte[] Data, List<Dictionary<string, string>> Rows)> decodedTables = [];
+                List<(string Path, string Reason, byte[]? Data)> failedTables = [];
+                List<(string Path, string Key)> candidates = [];
+                try
+                {
+                    foreach (var item in state.Source.GetDirectoryContent(directory) ?? [])
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var path = Normalize(item.Path);
+                        byte[] data;
+                        try
+                        {
+                            data = pendingTableBytes.GetValueOrDefault(path) ??
+                                   state.ModifiedDbRigidReferenceTables.GetValueOrDefault(path) ??
+                                   item.File.DataSource.ReadData();
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            failedTables.Add((path, $"{ex.GetType().Name}: {ex.Message}", null));
+                            continue;
+                        }
+
+                        if (!Wh3UnitCategoryResolver.TryDecodeSourceRigidReferenceRows(
+                                spec.TableName, data, path, state.DbSchema, out var rows, out var failure))
+                        {
+                            failedTables.Add((path, failure ?? "the table could not be decoded", data));
+                            continue;
+                        }
+
+                        decodedTables.Add((path, data, rows));
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    AddSkip(string.Empty, $"source DB table directory could not be read ({ex.GetType().Name}: {ex.Message})");
+                    continue;
+                }
+
+                var sourceKeyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (var table in decodedTables)
+                {
+                    foreach (var row in table.Rows)
+                    {
+                        var key = row.GetValueOrDefault(spec.KeyField) ?? string.Empty;
+                        if (key.Length != 0)
+                            sourceKeyCounts[key] = sourceKeyCounts.GetValueOrDefault(key) + 1;
+                        if (Normalize(row.GetValueOrDefault(spec.PathField) ?? string.Empty)
+                                .Equals(sourceRigid, StringComparison.OrdinalIgnoreCase))
+                        {
+                            candidates.Add((table.Path, key));
+                        }
+                    }
+                }
+
+                if (candidates.Count == 0)
+                {
+                    foreach (var failed in failedTables.Where(item =>
+                                 SharedRepackDbBytesContainRigidPath(item.Data, sourceRigid)))
+                    {
+                        AddSkip(string.Empty,
+                            $"DB table could not be decoded, so its {spec.PathField} reference cannot be verified " +
+                            $"({failed.Path}: {failed.Reason})");
+                    }
+
+                    continue;
+                }
+
+                if (failedTables.Count != 0)
+                {
+                    foreach (var (_, key) in candidates)
+                        AddSkip(key, "another source table of the same schema could not be decoded, so the effective row cannot be verified");
+                    continue;
+                }
+
+                foreach (var (tablePath, rowKey) in candidates)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (rowKey.Length == 0)
+                    {
+                        AddSkip(rowKey, $"source row in {tablePath} has an empty {spec.KeyField}");
+                        continue;
+                    }
+
+                    if (sourceKeyCounts.GetValueOrDefault(rowKey) != 1)
+                    {
+                        AddSkip(rowKey, "the source DB key is duplicated, so its effective row is ambiguous");
+                        continue;
+                    }
+
+                    if (state.Consumers?.Packs.Any(pack =>
+                            !pack.BelowSource && pack.Container.ContainsFile(tablePath)) == true)
+                    {
+                        AddSkip(rowKey, "a higher-priority pack replaces this DB table file");
+                        continue;
+                    }
+
+                    if (state.SharedRepackUnreadableHigherPriorityDbTables.Contains(spec.TableName))
+                    {
+                        AddSkip(rowKey, "a higher-priority DB table could not be decoded, so this source row may be overridden");
+                        continue;
+                    }
+
+                    if (state.SharedRepackHigherPriorityDbKeysByTable.TryGetValue(spec.TableName, out var laterKeys) &&
+                        laterKeys.Contains(rowKey))
+                    {
+                        AddSkip(rowKey, "a higher-priority pack overrides this DB row key");
+                        continue;
+                    }
+
+                    var table = decodedTables.First(item => item.Path.Equals(tablePath, StringComparison.OrdinalIgnoreCase));
+                    var rowKeys = new HashSet<string>([rowKey], StringComparer.OrdinalIgnoreCase);
+                    if (!Wh3UnitCategoryResolver.TryRewriteSourceRigidReferenceRows(
+                            spec.TableName,
+                            pendingTableBytes.GetValueOrDefault(table.Path) ?? table.Data,
+                            table.Path,
+                            state.DbSchema,
+                            rowKeys,
+                            sourceRigid,
+                            cloneRigid,
+                            out var rewrittenData,
+                            out var rewrittenKeys,
+                            out var failure) || rewrittenData == null ||
+                        rewrittenKeys.Count != 1 || !rewrittenKeys.Contains(rowKey))
+                    {
+                        AddSkip(rowKey, failure ?? "the schema-aware DB field rewrite did not produce output");
+                        continue;
+                    }
+
+                    pendingTableBytes[table.Path] = rewrittenData;
+                    rewrites.Add(new SharedRepackDbRigidReferenceRewrite(
+                        table.Path, rowKey, sourceRigid, cloneRigid));
+                }
+            }
+
+            void AddSkip(string rowKey, string reason)
+                => skips.Add(new SharedRepackDbRigidReferenceSkip(
+                    "db\\projectile_displays_tables", rowKey, sourceRigid, reason));
+        }
+
+        private static bool SharedRepackDbBytesContainRigidPath(byte[]? data, string rigidPath)
+        {
+            if (data == null)
+                return false;
+            var text = Encoding.Latin1.GetString(data) + "\n" + Encoding.Unicode.GetString(data);
+            var normalized = Normalize(rigidPath);
+            return text.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains(normalized.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        }
+
         private static HashSet<string> GetDirectGameplayRigidConsumers(BatchState state, string rigidPath)
         {
             rigidPath = Normalize(rigidPath);
@@ -2825,6 +3146,17 @@ namespace Editors.PackOptimizer.Core
                     rigidPath, out var indexed) == true)
             {
                 consumers.UnionWith(indexed);
+            }
+
+            if (state.SharedRepackDbRigidConsumersByPath.TryGetValue(rigidPath, out var dbConsumers))
+                consumers.UnionWith(dbConsumers);
+
+            foreach (var opaque in state.SharedRepackDbOpaqueTables)
+            {
+                if (SharedRepackOpaqueDbTableMentionsRigid(state, opaque, rigidPath))
+                    consumers.Add(ReferenceEquals(opaque.Container, state.Source)
+                        ? opaque.TablePath
+                        : $"[{opaque.PackName}] {opaque.TablePath}");
             }
 
             if (state.DirectRigidMeshMergeConsumersByRigid.TryGetValue(rigidPath, out var fallback))
@@ -8877,6 +9209,9 @@ namespace Editors.PackOptimizer.Core
                 StringComparer.OrdinalIgnoreCase);
             var vmdDocumentsToCommit = new Dictionary<string, (XmlDocument Document, VariantMesh Parsed)>(
                 StringComparer.OrdinalIgnoreCase);
+            var dbRigidReferenceTablesToCommit = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            var dbRigidReferenceRewritesToCommit = new List<SharedRepackDbRigidReferenceRewrite>();
+            var dbRigidReferenceSkipsToCommit = new List<SharedRepackDbRigidReferenceSkip>();
             var materialFiles = new List<(string Path, byte[] Data)>();
             var materialSources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             string? cloneFailure = null;
@@ -9261,6 +9596,18 @@ namespace Editors.PackOptimizer.Core
                             VariantMeshDefinitionLoader.Load(document.OuterXml));
                     }
                 }
+
+                foreach (var (sourcePath, clone) in newClonePlans)
+                {
+                    PrepareSharedRepackDbRigidReferenceRewrites(
+                        state,
+                        sourcePath,
+                        clone.Path,
+                        dbRigidReferenceTablesToCommit,
+                        dbRigidReferenceRewritesToCommit,
+                        dbRigidReferenceSkipsToCommit,
+                        cancellationToken);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -9560,6 +9907,14 @@ namespace Editors.PackOptimizer.Core
             result.MaxError = Math.Max(result.MaxError, stats.TopMax);
             result.ErrorSum += stats.TopSum;
             result.ErrorCount += stats.TopCount;
+            foreach (var (path, data) in dbRigidReferenceTablesToCommit)
+            {
+                WriteFile(state.Output, path, data);
+                state.ModifiedDbRigidReferenceTables[path] = data;
+            }
+
+            result.RewrittenDbRigidReferences.AddRange(dbRigidReferenceRewritesToCommit);
+            result.DbRigidReferenceRewriteSkips.AddRange(dbRigidReferenceSkipsToCommit);
             return built;
         }
 
@@ -10070,7 +10425,17 @@ namespace Editors.PackOptimizer.Core
             CancellationToken cancellationToken)
         {
             var dependencyIndex = state.GameplayMeshDependencyIndex;
-            if (dependencyIndex == null || dependencyIndex.DirectConsumersByRigid.Count == 0)
+            var databaseRigidPaths = state.SharedTextureRepack?.RewrittenDbRigidReferences
+                .Select(item => item.SourceRigid) ?? Enumerable.Empty<string>();
+            var indexRigidPaths = dependencyIndex == null
+                ? Enumerable.Empty<string>()
+                : dependencyIndex.DirectConsumersByRigid.Keys;
+            var directRigidPaths = indexRigidPaths
+                .Concat(databaseRigidPaths)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (directRigidPaths.Length == 0)
                 return;
 
             var before = errors.Count;
@@ -10080,8 +10445,7 @@ namespace Editors.PackOptimizer.Core
             var sourceResolvedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var sourceRigids = new Dictionary<string, RmvFile>(StringComparer.OrdinalIgnoreCase);
             var outputRigids = new Dictionary<string, RmvFile>(StringComparer.OrdinalIgnoreCase);
-            foreach (var rigidPath in dependencyIndex.DirectConsumersByRigid.Keys
-                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            foreach (var rigidPath in directRigidPaths)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var hasClone = state.SharedTextureRepack?.ClonedRigidPathBySource.ContainsKey(rigidPath) == true;
@@ -10271,8 +10635,7 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
-            foreach (var rigidPath in dependencyIndex.DirectConsumersByRigid.Keys
-                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            foreach (var rigidPath in directRigidPaths)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!sourceRigids.ContainsKey(rigidPath))
@@ -11535,6 +11898,24 @@ namespace Editors.PackOptimizer.Core
                 $"{result.RepackedRigids.Count(path => state.CrossRigidGeneratedRigidPaths.Contains(path)):N0} are generated " +
                 $"cross-rigid models and {result.RepackedRigids.Count(path => state.CrossRigidChangedRigids.Contains(path)):N0} " +
                 $"are source rigids cross-rigid merging relied on.");
+            sb.AppendLine(
+                $"Source DB rigid references redirected: {result.RewrittenDbRigidReferences.Count:N0}; " +
+                $"left unchanged: {result.DbRigidReferenceRewriteSkips.Count:N0}.");
+            foreach (var reference in result.RewrittenDbRigidReferences
+                         .OrderBy(item => item.TablePath, StringComparer.OrdinalIgnoreCase)
+                         .ThenBy(item => item.RowKey, StringComparer.OrdinalIgnoreCase).Take(10))
+            {
+                sb.AppendLine(
+                    $"  DB {reference.TablePath}, key {reference.RowKey}: " +
+                    $"{reference.SourceRigid} -> {reference.CloneRigid}");
+            }
+            foreach (var skipped in result.DbRigidReferenceRewriteSkips
+                         .OrderBy(item => item.TablePath, StringComparer.OrdinalIgnoreCase)
+                         .ThenBy(item => item.RowKey, StringComparer.OrdinalIgnoreCase).Take(10))
+            {
+                sb.AppendLine(
+                    $"  DB unchanged {skipped.TablePath}, key {skipped.RowKey}: {skipped.Reason}");
+            }
             if (result.DeduplicatedOutputs != 0)
             {
                 sb.AppendLine(

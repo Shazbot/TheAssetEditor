@@ -9253,6 +9253,89 @@
         "localised_fields": [],
         "localised_key_order": []
       }
+    ],
+    "projectile_displays_tables": [
+      {
+        "version": 12,
+        "fields": [
+          {
+            "name": "display_model",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "impact",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "launch_fx",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "trail_fx",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "stationary_fx",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "airborne_anim",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "landing_anim",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "tip_offset",
+            "field_type": "F32"
+          },
+          {
+            "name": "trail_spin",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "launch_camera_shake",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "impact_bounce",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "impact_penetrate",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "impact_blood",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "impact_bounce_blood",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "impact_penetrate_blood",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "mirroring_start",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "mirroring_trail",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "scale",
+            "field_type": "F32"
+          }
+        ]
+      }
     ]
   }
 }

@@ -157,6 +157,201 @@ namespace Test.PackOptimizer.Core.Services
             return stream.ToArray();
         }
 
+        private sealed record ProjectileDisplayRow(
+            string Key,
+            string DisplayModel,
+            string Impact,
+            int TipOffsetBits,
+            byte TrailSpin,
+            int ScaleBits);
+
+        private static readonly (string Name, string Type)[] ProjectileDisplayFields =
+        [
+            ("display_model", "OptionalStringU8"),
+            ("impact", "OptionalStringU8"),
+            ("key", "StringU8"),
+            ("launch_fx", "OptionalStringU8"),
+            ("trail_fx", "OptionalStringU8"),
+            ("stationary_fx", "OptionalStringU8"),
+            ("airborne_anim", "OptionalStringU8"),
+            ("landing_anim", "OptionalStringU8"),
+            ("tip_offset", "F32"),
+            ("trail_spin", "Boolean"),
+            ("launch_camera_shake", "OptionalStringU8"),
+            ("impact_bounce", "OptionalStringU8"),
+            ("impact_penetrate", "OptionalStringU8"),
+            ("impact_blood", "OptionalStringU8"),
+            ("impact_bounce_blood", "OptionalStringU8"),
+            ("impact_penetrate_blood", "OptionalStringU8"),
+            ("mirroring_start", "OptionalStringU8"),
+            ("mirroring_trail", "OptionalStringU8"),
+            ("scale", "F32"),
+        ];
+
+        private static string ProjectileDisplaySchemaJson()
+            => "{\"definitions\":{\"projectile_displays_tables\":[{\"version\":12,\"fields\":[" +
+               string.Join(",", ProjectileDisplayFields.Select(field =>
+                   "{\"name\":\"" + field.Name + "\",\"field_type\":\"" + field.Type + "\"}")) +
+               "]}]}}";
+
+        private static void WriteStringU8(BinaryWriter writer, string value)
+        {
+            var bytes = Encoding.ASCII.GetBytes(value);
+            writer.Write((ushort)bytes.Length);
+            writer.Write(bytes);
+        }
+
+        private static void WriteOptionalStringU8(BinaryWriter writer, string? value)
+        {
+            if (value == null)
+            {
+                writer.Write((byte)0);
+                return;
+            }
+
+            writer.Write((byte)1);
+            WriteStringU8(writer, value);
+        }
+
+        private static byte[] ProjectileDisplayRowBytes(ProjectileDisplayRow row)
+        {
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+            WriteOptionalStringU8(writer, row.DisplayModel);
+            WriteOptionalStringU8(writer, row.Impact);
+            WriteStringU8(writer, row.Key);
+            WriteOptionalStringU8(writer, "launch_" + row.Key);
+            WriteOptionalStringU8(writer, null);
+            WriteOptionalStringU8(writer, "stationary_" + row.Key);
+            WriteOptionalStringU8(writer, null);
+            WriteOptionalStringU8(writer, "landing_" + row.Key);
+            writer.Write(row.TipOffsetBits);
+            writer.Write(row.TrailSpin);
+            WriteOptionalStringU8(writer, "camera_" + row.Key);
+            WriteOptionalStringU8(writer, null);
+            WriteOptionalStringU8(writer, "penetrate_" + row.Key);
+            WriteOptionalStringU8(writer, null);
+            WriteOptionalStringU8(writer, "bounce_blood_" + row.Key);
+            WriteOptionalStringU8(writer, null);
+            WriteOptionalStringU8(writer, "mirror_start_" + row.Key);
+            WriteOptionalStringU8(writer, null);
+            writer.Write(row.ScaleBits);
+            writer.Flush();
+            return stream.ToArray();
+        }
+
+        private static byte[] ProjectileDisplayTable(params ProjectileDisplayRow[] rows)
+        {
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+            writer.Write(new byte[] { 0xfd, 0xfe, 0xfc, 0xff });
+            writer.Write((short)2);
+            writer.Write(Encoding.Unicode.GetBytes("AB"));
+            writer.Write(new byte[] { 0xfc, 0xfd, 0xfe, 0xff });
+            writer.Write(12);
+            writer.Write((byte)0);
+            writer.Write(rows.Length);
+            foreach (var row in rows)
+                writer.Write(ProjectileDisplayRowBytes(row));
+            writer.Flush();
+            return stream.ToArray();
+        }
+
+        private static (bool Success, byte[]? Data, HashSet<string> Keys, string? Failure)
+            RewriteProjectileDisplayRigidRows(
+                byte[] data,
+                string expectedPath,
+                string replacementPath,
+                IReadOnlySet<string> rowKeys,
+                PackOptimizerDbSchema? supplied = null)
+        {
+            var method = ResolverType.GetMethod(
+                "TryRewriteSourceRigidReferenceRows",
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+            object?[] arguments =
+            [
+                "projectile_displays_tables",
+                data,
+                "db/projectile_displays_tables/ak_teb",
+                supplied,
+                rowKeys,
+                expectedPath,
+                replacementPath,
+                null,
+                null,
+                null,
+            ];
+            var success = (bool)method.Invoke(null, arguments)!;
+            return (
+                success,
+                (byte[]?)arguments[7],
+                (HashSet<string>)arguments[8]!,
+                (string?)arguments[9]);
+        }
+
+        [Test]
+        public void ProjectileDisplayRigidReference_RewriteChangesOnlyTheSelectedTypedCell()
+        {
+            const string table = "projectile_displays_tables";
+            const string key = "teb_irrana";
+            const string originalPath = "VariantMeshes/wh_variantmodels/hu1/brt/brt_props/brt_men_at_arms_spear_1h_01.rigid_model_v2";
+            const string replacementPath = "VariantMeshes\\shared_texture_repack\\spear_clone.rigid_model_v2";
+            var supplied = PackOptimizerDbSchema.Load(WriteSchema("projectile.json", ProjectileDisplaySchemaJson()));
+            var rows = new[]
+            {
+                new ProjectileDisplayRow("teb_roc_organ", "VariantMeshes/other_1.rigid_model_v2", "impact_a", unchecked((int)0x80000000), 1, 0x7fc01234),
+                new ProjectileDisplayRow(key, originalPath, "impact_b", 0x3f123456, 0, unchecked((int)0x80000000)),
+                new ProjectileDisplayRow("teb_galloper_gun", "VariantMeshes/other_2.rigid_model_v2", "impact_c", 0x7fc05678, 1, 0x3f000000),
+            };
+            var original = ProjectileDisplayTable(rows);
+            var originalSnapshot = original.ToArray();
+
+            // The normal optimizer request has no supplied schema; its embedded table layout must
+            // still decode version 12. The supplied-schema route must also retain the extra layout.
+            Assert.That(Decode(table, original, [], null), Has.Count.EqualTo(3));
+            Assert.That(Decode(table, original, [], supplied), Has.Count.EqualTo(3));
+            var rewritten = RewriteProjectileDisplayRigidRows(
+                original,
+                originalPath.Replace('/', '\\').ToLowerInvariant(),
+                replacementPath,
+                new HashSet<string>([key], StringComparer.OrdinalIgnoreCase));
+
+            Assert.That(rewritten.Success, Is.True, rewritten.Failure);
+            Assert.That(rewritten.Data, Is.Not.Null);
+            Assert.That(rewritten.Keys, Is.EquivalentTo(new[] { key }));
+            var headerLength = 4 + 2 + 4 + 4 + 4 + 1 + 4;
+            var expected = original[..headerLength]
+                .Concat(ProjectileDisplayRowBytes(rows[0]))
+                .Concat(ProjectileDisplayRowBytes(rows[1] with { DisplayModel = replacementPath }))
+                .Concat(ProjectileDisplayRowBytes(rows[2]))
+                .ToArray();
+            Assert.That(rewritten.Data, Is.EqualTo(expected), "only the schema-selected row cell and its length may change");
+            Assert.That(original, Is.EqualTo(originalSnapshot), "the source table buffer remains unchanged");
+
+            var afterRows = Decode(table, rewritten.Data!, [], null);
+            Assert.That(afterRows.Select(row => row["key"]), Is.EqualTo(rows.Select(row => row.Key)));
+            for (var rowIndex = 0; rowIndex < rows.Length; rowIndex++)
+            {
+                foreach (var field in ProjectileDisplayFields)
+                {
+                    var expectedValue = rowIndex == 1 && field.Name == "display_model"
+                        ? replacementPath
+                        : Decode(table, original, [], null)[rowIndex][field.Name];
+                    Assert.That(afterRows[rowIndex][field.Name], Is.EqualTo(expectedValue), $"row {rowIndex}, field {field.Name}");
+                }
+            }
+
+            var duplicate = ProjectileDisplayTable(rows[1], rows[1]);
+            var rejected = RewriteProjectileDisplayRigidRows(
+                duplicate,
+                originalPath,
+                replacementPath,
+                new HashSet<string>([key], StringComparer.OrdinalIgnoreCase));
+            Assert.That(rejected.Success, Is.False);
+            Assert.That(rejected.Data, Is.Null);
+            Assert.That(rejected.Failure, Does.Contain("duplicated"));
+        }
+
         [Test]
         public void LeftoverBytesAfterTheLastRow_FailTheDecode()
         {

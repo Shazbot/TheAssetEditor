@@ -409,6 +409,20 @@ namespace Editors.PackOptimizer.Core
     /// </summary>
     internal static partial class Wh3UnitCategoryResolver
     {
+        internal sealed record SourceRigidReferenceTableSpec(
+            string TableName,
+            string KeyField,
+            string KeyFieldType,
+            string PathField,
+            string PathFieldType);
+
+        // Keep this allowlist separate from RequiredTables: these tables are not part of the
+        // gameplay roster resolver. They are decoded only for the bounded clone redirection path.
+        internal static IReadOnlyList<SourceRigidReferenceTableSpec> SourceRigidReferenceTables { get; } =
+        [
+            new("projectile_displays_tables", "key", "StringU8", "display_model", "OptionalStringU8"),
+        ];
+
         private const string MainUnitsTable = "main_units_tables";
         private const string LandUnitsTable = "land_units_tables";
         private const string UnitVariantsTable = "unit_variants_tables";
@@ -2697,6 +2711,241 @@ namespace Editors.PackOptimizer.Core
             }
 
             return rows;
+        }
+
+        internal static bool TryDecodeSourceRigidReferenceRows(
+            string tableName,
+            byte[] data,
+            string packedPath,
+            PackOptimizerDbSchema? supplied,
+            out List<Dictionary<string, string>> rows,
+            out string? failure)
+        {
+            rows = [];
+            failure = null;
+            if (!SourceRigidReferenceTables.Any(table =>
+                    table.TableName.Equals(tableName, StringComparison.OrdinalIgnoreCase)))
+            {
+                failure = $"table {tableName} is not in the rigid-reference rewrite allowlist";
+                return false;
+            }
+
+            if (!Schema.Value.Definitions.ContainsKey(tableName) && supplied?.Tables.ContainsKey(tableName) != true)
+            {
+                failure = $"no schema is available for supported table {tableName}";
+                return false;
+            }
+
+            var diagnostics = new List<string>();
+            try
+            {
+                rows = DecodeTableWithSchemas(tableName, data, packedPath, diagnostics, supplied, null);
+                if (diagnostics.Count != 0)
+                {
+                    failure = string.Join(" ", diagnostics);
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException or
+                                       ArgumentException or OverflowException)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
+        // Rewrite only the schema-declared optional string cell in selected uniquely-keyed rows.
+        // The DB header and every other cell are copied byte-for-byte, so GUID/version markers,
+        // optional-field representation, float payloads, and unrelated row data stay untouched.
+        internal static bool TryRewriteSourceRigidReferenceRows(
+            string tableName,
+            byte[] data,
+            string packedPath,
+            PackOptimizerDbSchema? supplied,
+            IReadOnlySet<string> rowKeys,
+            string expectedPath,
+            string replacementPath,
+            out byte[]? rewrittenData,
+            out HashSet<string> rewrittenKeys,
+            out string? failure)
+        {
+            rewrittenData = null;
+            rewrittenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            failure = null;
+            var spec = SourceRigidReferenceTables.FirstOrDefault(table =>
+                table.TableName.Equals(tableName, StringComparison.OrdinalIgnoreCase));
+            if (spec == null)
+            {
+                failure = $"table {tableName} is not in the rigid-reference rewrite allowlist";
+                return false;
+            }
+
+            if (!replacementPath.All(character => character <= 0x7f))
+            {
+                failure = $"replacement path for {tableName} is not ASCII";
+                return false;
+            }
+
+            try
+            {
+                var position = 0;
+                int? packedVersion = null;
+                while (position + 4 <= data.Length)
+                {
+                    if (HasMarker(data, position, 0xfd, 0xfe, 0xfc, 0xff))
+                    {
+                        position += 4;
+                        var length = ReadInt16(data, ref position);
+                        if (length < 0)
+                            throw new InvalidDataException("Negative DB GUID length.");
+                        Skip(data, ref position, checked(length * 2));
+                        continue;
+                    }
+
+                    if (HasMarker(data, position, 0xfc, 0xfd, 0xfe, 0xff))
+                    {
+                        position += 4;
+                        packedVersion = ReadInt32(data, ref position);
+                        continue;
+                    }
+
+                    // The format byte precedes the row count, matching DecodeTableWithSchemas.
+                    position++;
+                    break;
+                }
+
+                var picked = FindTableVersion(tableName, packedVersion, supplied);
+                var schema = picked?.Version;
+                if (schema == null || (packedVersion.HasValue && schema.Version < packedVersion.Value))
+                {
+                    failure = $"no schema for {tableName} version " +
+                              (packedVersion?.ToString(CultureInfo.InvariantCulture) ?? "<none>");
+                    return false;
+                }
+
+                var fields = schema.Fields;
+                if (fields.Any(field => !SupportedFieldTypes.Contains(field.FieldType)))
+                {
+                    var unsupported = fields.First(field => !SupportedFieldTypes.Contains(field.FieldType));
+                    failure = $"{tableName} version {schema.Version} field '{unsupported.Name}' has unsupported type '{unsupported.FieldType}'";
+                    return false;
+                }
+
+                var keyIndexes = fields.Select((field, index) => (field, index))
+                    .Where(item => item.field.Name.Equals(spec.KeyField, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                var pathIndexes = fields.Select((field, index) => (field, index))
+                    .Where(item => item.field.Name.Equals(spec.PathField, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                if (keyIndexes.Length != 1 || pathIndexes.Length != 1 ||
+                    !keyIndexes[0].field.FieldType.Equals(spec.KeyFieldType, StringComparison.Ordinal) ||
+                    !pathIndexes[0].field.FieldType.Equals(spec.PathFieldType, StringComparison.Ordinal))
+                {
+                    failure = $"{tableName} version {schema.Version} does not match the registered " +
+                              $"{spec.KeyField}/{spec.PathField} field layout";
+                    return false;
+                }
+
+                var keyIndex = keyIndexes[0].index;
+                var pathIndex = pathIndexes[0].index;
+                var rowCount = ReadInt32(data, ref position);
+                if (rowCount < 0)
+                    throw new InvalidDataException($"Negative row count {rowCount}.");
+
+                using var output = new MemoryStream(data.Length + Math.Max(0, replacementPath.Length - expectedPath.Length));
+                output.Write(data.AsSpan(0, position));
+                var selectedKeyOccurrences = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+                {
+                    var spans = new (int Start, int End, string Value)[fields.Count];
+                    for (var fieldIndex = 0; fieldIndex < fields.Count; fieldIndex++)
+                    {
+                        var start = position;
+                        var value = ReadField(data, ref position, fields[fieldIndex].FieldType);
+                        spans[fieldIndex] = (start, position, value);
+                    }
+
+                    var key = spans[keyIndex].Value;
+                    var shouldRewrite = rowKeys.Contains(key) &&
+                                        NormalizePath(spans[pathIndex].Value).Equals(
+                                            NormalizePath(expectedPath), StringComparison.OrdinalIgnoreCase);
+                    if (rowKeys.Contains(key))
+                    {
+                        var occurrenceCount = selectedKeyOccurrences.GetValueOrDefault(key) + 1;
+                        selectedKeyOccurrences[key] = occurrenceCount;
+                        if (occurrenceCount > 1)
+                            throw new InvalidDataException($"row key '{key}' is duplicated in {packedPath}");
+                    }
+
+                    for (var fieldIndex = 0; fieldIndex < spans.Length; fieldIndex++)
+                    {
+                        var span = spans[fieldIndex];
+                        if (shouldRewrite && fieldIndex == pathIndex)
+                            WriteOptionalStringU8(output, replacementPath);
+                        else
+                            output.Write(data.AsSpan(span.Start, span.End - span.Start));
+                    }
+
+                    if (shouldRewrite)
+                        rewrittenKeys.Add(key);
+                }
+
+                if (position != data.Length)
+                    throw new InvalidDataException(
+                        $"{data.Length - position} byte(s) remain after the last {tableName} row.");
+                if (rowKeys.Count == 0)
+                    return true;
+                if (rewrittenKeys.Count == 0)
+                    throw new InvalidDataException($"none of the selected rows still contains {expectedPath}");
+                if (rewrittenKeys.Count != rowKeys.Count)
+                {
+                    var writtenKeySet = rewrittenKeys;
+                    var missing = rowKeys.Where(key => !writtenKeySet.Contains(key))
+                        .OrderBy(key => key, StringComparer.Ordinal).First();
+                    throw new InvalidDataException($"selected row '{missing}' no longer contains {expectedPath}");
+                }
+
+                var candidate = output.ToArray();
+                if (!TryDecodeSourceRigidReferenceRows(tableName, candidate, packedPath, supplied, out var verifyRows, out var verifyFailure))
+                    throw new InvalidDataException($"rewritten table did not decode: {verifyFailure}");
+                foreach (var key in rewrittenKeys)
+                {
+                    var verify = verifyRows.Where(row => row.GetValueOrDefault(spec.KeyField)
+                            ?.Equals(key, StringComparison.OrdinalIgnoreCase) == true)
+                        .ToArray();
+                    if (verify.Length != 1 ||
+                        verify[0].GetValueOrDefault(spec.PathField)
+                            ?.Equals(replacementPath, StringComparison.OrdinalIgnoreCase) != true)
+                    {
+                        throw new InvalidDataException($"rewritten row '{key}' did not validate in {packedPath}");
+                    }
+                }
+
+                rewrittenData = candidate;
+                return true;
+            }
+            catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException or
+                                       ArgumentException or OverflowException or IOException)
+            {
+                rewrittenData = null;
+                rewrittenKeys.Clear();
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static void WriteOptionalStringU8(Stream output, string value)
+        {
+            var bytes = Encoding.ASCII.GetBytes(value);
+            if (bytes.Length > ushort.MaxValue)
+                throw new InvalidDataException("Replacement optional string is too long.");
+            output.WriteByte(1);
+            Span<byte> length = stackalloc byte[2];
+            BinaryPrimitives.WriteUInt16LittleEndian(length, (ushort)bytes.Length);
+            output.Write(length);
+            output.Write(bytes);
         }
 
         private static bool HasMarker(

@@ -694,6 +694,21 @@ namespace Editors.PackOptimizer.Core
             // Other enabled mods (null without any). Never part of GameplayTraversalContainers.
             public ConsumerReferenceIndex? Consumers { get; set; }
             public string? DbSchemaPath { get; set; }
+            public PackOptimizerDbSchema? DbSchema { get; set; }
+            // Source-pack copies of registered DB rigid-reference tables that have been rewritten
+            // as part of a committed private-clone plan. A later set starts from these bytes.
+            public Dictionary<string, byte[]> ModifiedDbRigidReferenceTables { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> SharedRepackDbRigidConsumersByPath { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public List<(IPackFileContainer Container, string PackName, string TablePath, string Reason)>
+                SharedRepackDbOpaqueTables { get; } = [];
+            public Dictionary<string, string> SharedRepackDbOpaqueTableText { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> SharedRepackHigherPriorityDbKeysByTable { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> SharedRepackUnreadableHigherPriorityDbTables { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, IPackFileContainer?> DependencyContainerResolutions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public int GameplayTraversalContainerResolutionCacheHits { get; set; }

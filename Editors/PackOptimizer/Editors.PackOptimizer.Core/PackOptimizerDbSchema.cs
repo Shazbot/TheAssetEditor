@@ -6,9 +6,9 @@ namespace Editors.PackOptimizer.Core
 {
     /// <summary>
     /// The DB table layouts of an RPFM schema file (as the mod manager bundles it, zstd-compressed
-    /// or plain JSON), reduced to the tables the unit category resolver reads. When a run is given
-    /// one, the resolver looks a table version up here first and falls back to the schema
-    /// embedded in this library.
+    /// or plain JSON), reduced to the tables the unit category resolver reads and the allowlisted
+    /// DB fields the shared repacker can safely rewrite. When a run is given one, the resolver
+    /// looks a table version up here first and falls back to the schema embedded in this library.
     /// </summary>
     public sealed class PackOptimizerDbSchema
     {
@@ -61,7 +61,9 @@ namespace Editors.PackOptimizer.Core
             }
 
             var tables = new Dictionary<string, List<DbSchemaTableVersion>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var tableName in Wh3UnitCategoryResolver.RequiredTableNames)
+            foreach (var tableName in Wh3UnitCategoryResolver.RequiredTableNames
+                         .Concat(Wh3UnitCategoryResolver.SourceRigidReferenceTables.Select(table => table.TableName))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 if (!definitions.TryGetProperty(tableName, out var versions))
                     continue;

@@ -1043,6 +1043,7 @@ namespace Editors.PackOptimizer.Core
             }
 
             ValidateDownscaledTextures(state, errors, cancellationToken);
+            ValidateSharedRepackDbRigidReferences(state, errors, cancellationToken);
             ValidateDirectRigidEmbeddedTextureReferences(state, errors, cancellationToken);
             ValidateLenientVmdsUnchanged(state, errors);
             ValidateSharedTextureRepack(state, errors, cancellationToken);
@@ -1310,6 +1311,117 @@ namespace Editors.PackOptimizer.Core
             if (state.SharedTextureRepack is { } repack)
                 expected.UnionWith(repack.ClonedRigidPathBySource.Values);
             return expected;
+        }
+
+        private static void ValidateSharedRepackDbRigidReferences(
+            BatchState state,
+            List<string> errors,
+            CancellationToken cancellationToken)
+        {
+            var repack = state.SharedTextureRepack;
+            if (repack == null || repack.RewrittenDbRigidReferences.Count == 0)
+                return;
+
+            var before = errors.Count;
+            var clones = new Dictionary<string, RmvFile>(StringComparer.OrdinalIgnoreCase);
+            foreach (var references in repack.RewrittenDbRigidReferences
+                         .GroupBy(item => item.TablePath, StringComparer.OrdinalIgnoreCase))
+            {
+                var tablePath = references.Key;
+                cancellationToken.ThrowIfCancellationRequested();
+                var outputFile = state.Output.FindFile(tablePath);
+                if (outputFile == null)
+                {
+                    errors.Add($"Rewritten DB rigid-reference table is missing from output: {tablePath}");
+                    continue;
+                }
+
+                byte[] outputBytes;
+                try
+                {
+                    outputBytes = outputFile.DataSource.ReadData();
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Rewritten DB rigid-reference table could not be read: {tablePath} ({ex.Message})");
+                    continue;
+                }
+
+                if (!state.ModifiedDbRigidReferenceTables.TryGetValue(tablePath, out var expectedBytes) ||
+                    !outputBytes.AsSpan().SequenceEqual(expectedBytes))
+                {
+                    errors.Add($"Serialized DB rigid-reference table differs from its committed typed rewrite: {tablePath}");
+                    continue;
+                }
+
+                var tableName = Wh3UnitCategoryResolver.SourceRigidReferenceTables
+                    .FirstOrDefault(spec => tablePath.StartsWith(
+                        $"db\\{spec.TableName}\\", StringComparison.OrdinalIgnoreCase))?.TableName;
+                if (tableName == null)
+                {
+                    errors.Add($"Rewritten DB rigid-reference table does not decode: {tablePath} " +
+                               "(unsupported registered table path)");
+                    continue;
+                }
+
+                if (!Wh3UnitCategoryResolver.TryDecodeSourceRigidReferenceRows(
+                        tableName, outputBytes, tablePath, state.DbSchema, out var rows, out var decodeFailure))
+                {
+                    errors.Add($"Rewritten DB rigid-reference table does not decode: {tablePath} " +
+                               $"({decodeFailure ?? "unknown DB decode failure"})");
+                    continue;
+                }
+
+                var spec = Wh3UnitCategoryResolver.SourceRigidReferenceTables.Single(item =>
+                    item.TableName.Equals(tableName, StringComparison.OrdinalIgnoreCase));
+                foreach (var reference in references)
+                {
+                    var matchingRows = rows.Where(row => row.GetValueOrDefault(spec.KeyField)
+                            ?.Equals(reference.RowKey, StringComparison.OrdinalIgnoreCase) == true)
+                        .ToArray();
+                    if (matchingRows.Length != 1 ||
+                        !Normalize(matchingRows[0].GetValueOrDefault(spec.PathField) ?? string.Empty)
+                            .Equals(Normalize(reference.CloneRigid), StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors.Add(
+                            $"DB rigid-reference row was not persisted as planned: " +
+                            $"{tablePath} key {reference.RowKey} -> {reference.CloneRigid}");
+                    }
+
+                    if (!clones.ContainsKey(reference.CloneRigid))
+                    {
+                        var cloneFile = state.Output.FindFile(reference.CloneRigid);
+                        if (cloneFile == null)
+                        {
+                            errors.Add($"DB rigid-reference clone is missing from output: {reference.CloneRigid}");
+                            continue;
+                        }
+
+                        try
+                        {
+                            var clone = ModelFactory.Create().Load(cloneFile.DataSource.ReadData());
+                            if (clone.ModelList == null)
+                            {
+                                errors.Add($"DB rigid-reference clone has no model list: {reference.CloneRigid}");
+                                continue;
+                            }
+
+                            clones[reference.CloneRigid] = clone;
+                        }
+                        catch (Exception ex)
+                        {
+                            errors.Add($"DB rigid-reference clone could not be loaded: {reference.CloneRigid} ({ex.Message})");
+                        }
+                    }
+                }
+            }
+
+            if (errors.Count == before)
+            {
+                state.ValidationMessages.Add(
+                    $"PASS: {repack.RewrittenDbRigidReferences.Count:N0} registered source DB rigid reference(s) " +
+                    "were persisted to loadable private clones; typed table bytes match the committed rewrite.");
+            }
         }
 
         private static void ValidateUnchangedModelPathSet(
