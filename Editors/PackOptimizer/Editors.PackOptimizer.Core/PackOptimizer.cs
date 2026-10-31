@@ -43,13 +43,21 @@ namespace Editors.PackOptimizer.Core
         Update = 1,
     }
 
-    /// <summary>Simplifier settings for one LOD level of the editor LOD rebuild.</summary>
+    /// <summary>
+    /// Simplifier settings for one LOD level of the editor LOD rebuild. With <paramref name="HardTriangleCap"/>,
+    /// the old part's triangle count is each rebuilt part's ceiling: a part that stays above it is simplified again
+    /// with the error cap raised to <paramref name="CapErrorScale"/> times <paramref name="TargetError"/> (0: no
+    /// error cap), and the overage of parts that still cannot get there (seams, topology) is taken from the other
+    /// parts of the same LOD. Parts can still end above the old count when the raised cap stops them.
+    /// </summary>
     public sealed record EditorLodLevelSettings(
         float TargetError,
         bool LockBorder,
         EditorLodSimplifyFlags Flags = EditorLodSimplifyFlags.None,
         float AttributeScale = 1f,
-        EditorLodSimplifyMethod Method = EditorLodSimplifyMethod.Attributes)
+        EditorLodSimplifyMethod Method = EditorLodSimplifyMethod.Attributes,
+        bool HardTriangleCap = false,
+        float CapErrorScale = 0f)
     {
         /// <summary>The first LOD level (1-based) on which <see cref="EditorLodSimplifyFlags.Prune"/> may be used.</summary>
         public const int FirstPruneLevel = 3;
@@ -57,8 +65,8 @@ namespace Editors.PackOptimizer.Core
         public static readonly IReadOnlyList<EditorLodLevelSettings> Default =
         [
             new(0.02f, true),
-            new(0.04f, true),
-            new(0.08f, false, EditorLodSimplifyFlags.None, 0.5f),
+            new(0.04f, true, HardTriangleCap: true, CapErrorScale: 2f),
+            new(0.08f, false, EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f),
         ];
 
         /// <summary>The settings of LOD <paramref name="lodIndex"/> (1-based); levels past the table use its last entry.</summary>
@@ -78,6 +86,8 @@ namespace Editors.PackOptimizer.Core
                     throw new ArgumentException($"Editor LOD level {level}: the error cap must be finite and not negative.");
                 if (!float.IsFinite(entry.AttributeScale) || entry.AttributeScale < 0)
                     throw new ArgumentException($"Editor LOD level {level}: the attribute scale must be finite and not negative.");
+                if (!float.IsFinite(entry.CapErrorScale) || entry.CapErrorScale < 0)
+                    throw new ArgumentException($"Editor LOD level {level}: the cap error scale must be finite and not negative.");
                 if (entry.Flags.HasFlag(EditorLodSimplifyFlags.Prune) && level < FirstPruneLevel)
                     throw new ArgumentException($"Editor LOD level {level}: prune is only allowed from LOD{FirstPruneLevel} on.");
             }
@@ -86,9 +96,10 @@ namespace Editors.PackOptimizer.Core
         }
 
         /// <summary>
-        /// Parses "error:locked|free[:flags][:attrScale]" entries separated by commas, for example
-        /// "0.02:locked:folds+reglight,0.04:locked:folds,0.08:free:prune+clamped:attr0.5". Flags are joined with '+'
-        /// (folds, reglight, clamped, prune). The flags and the attribute scale are optional and may come in either order.
+        /// Parses "error:locked|free[:flags][:attrScale][:cap]" entries separated by commas, for example
+        /// "0.02:locked:folds+reglight,0.04:locked:folds:cap,0.08:free:prune+clamped:attr0.5:cap". Flags are joined with '+'
+        /// (folds, reglight, clamped, prune). The flags, the attribute scale, the method (update, attributes) and the
+        /// hard triangle cap (cap, capN = re-runs bounded to N times the error cap, nocap) are optional and may come in any order.
         /// </summary>
         public static IReadOnlyList<EditorLodLevelSettings> Parse(string text)
         {
@@ -99,8 +110,24 @@ namespace Editors.PackOptimizer.Core
                     var flags = EditorLodSimplifyFlags.None;
                     var scale = 1f;
                     var method = EditorLodSimplifyMethod.Attributes;
+                    var cap = false;
+                    var capScale = 0f;
                     foreach (var extra in pieces.Skip(2))
                     {
+                        if (extra.Equals("nocap", StringComparison.OrdinalIgnoreCase))
+                        {
+                            cap = false;
+                            capScale = 0f;
+                            continue;
+                        }
+
+                        if (extra.StartsWith("cap", StringComparison.OrdinalIgnoreCase))
+                        {
+                            cap = true;
+                            capScale = extra.Length == 3 ? 0f : float.Parse(extra[3..], System.Globalization.CultureInfo.InvariantCulture);
+                            continue;
+                        }
+
                         if (extra.Equals("update", StringComparison.OrdinalIgnoreCase))
                         {
                             method = EditorLodSimplifyMethod.Update;
@@ -137,7 +164,9 @@ namespace Editors.PackOptimizer.Core
                         !(pieces.Length > 1 && pieces[1].Equals("free", StringComparison.OrdinalIgnoreCase)),
                         flags,
                         scale,
-                        method);
+                        method,
+                        cap,
+                        capScale);
                 })
                 .ToArray();
             return Validate(table);
@@ -240,7 +269,7 @@ namespace Editors.PackOptimizer.Core
         /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
         /// stages next to this number, so changing the output without bumping the version fails the test.
         /// </summary>
-        public const int OutputVersion = 34;
+        public const int OutputVersion = 35;
 
         /// <summary>
         /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format

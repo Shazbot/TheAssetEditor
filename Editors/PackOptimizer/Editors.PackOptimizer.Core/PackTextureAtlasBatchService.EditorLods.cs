@@ -15,6 +15,16 @@ namespace Editors.PackOptimizer.Core
         // only the meshes of LOD 1+ are replaced, so WSModel material tables remain valid.
         private const int EditorLodMaxLevels = 16;
         private const float EditorLodErrorLimitedShare = 0.8f;
+        // The error cap of a hard-capped re-run: far past any real error, and its square stays finite.
+        private const float EditorLodUncappedError = 1.0e6f;
+
+        // The inputs of one rebuilt part, kept so the hard triangle cap can simplify it again.
+        private sealed record EditorLodGroupInput(
+            CommonVertex[] Vertices, float[] Positions, float[] Normals, float[] Uvs, ushort[] Indices, float[] BoneEmbedding, byte[] JointFlags);
+
+        // The reduction factor whose target is at most oldTriangles (MeshOptSimplifier rounds index count * factor / 3).
+        private static float EditorLodCappedFactor(float factor, int oldTriangles, int indexCount)
+            => indexCount == 0 ? factor : Math.Min(factor, (float)(oldTriangles * 3.0 / indexCount));
 
         private sealed class ShapeSamples
         {
@@ -25,6 +35,8 @@ namespace Editors.PackOptimizer.Core
         }
 
         private sealed record VanishedComponent(string Rigid, int Lod, int Part, int Triangles, Vector3 Size);
+
+        private sealed record PastCapPart(string Rigid, int Lod, int Part, int OldTriangles, int Triangles, float Error);
 
         private sealed class EditorLodRemakeResult
         {
@@ -40,6 +52,11 @@ namespace Editors.PackOptimizer.Core
             public int PartsKeptNotReduced { get; set; }
             public int PartsMissedTargetByError { get; set; }
             public int PartsMissedTargetByTopology { get; set; }
+            // Hard triangle cap: result errors of parts simplified past the error cap, parts that gave up triangles
+            // for parts stuck on topology, and capped LODs that stayed heavier than the old ones anyway.
+            public List<PastCapPart> PastCapParts { get; } = [];
+            public int PartsGaveTopologyShare { get; set; }
+            public int CappedLodsStillHeavier { get; set; }
             public IReadOnlyList<EditorLodLevelSettings> Settings { get; set; } = EditorLodLevelSettings.Default;
             public float BoneWeight { get; set; }
             public bool JointPriority { get; set; }
@@ -292,7 +309,23 @@ namespace Editors.PackOptimizer.Core
                 var pendingSkinned = 0;
                 var pendingSnapped = 0;
                 var pendingUpdated = 0;
+                var pendingShared = 0;
                 var surfaces = new (Vector3[] Positions, ushort[] Indices)?[parts.Length];
+                var inputs = new EditorLodGroupInput?[parts.Length];
+                var simplifiedParts = new MeshOptSimplifyResult?[parts.Length];
+                var targets = new int[parts.Length];
+                // Result error of parts the hard triangle cap simplified without the error cap (NaN: not past the cap).
+                var pastCapError = Enumerable.Repeat(float.NaN, parts.Length).ToArray();
+                var hardCap = levelSettings.HardTriangleCap;
+                var uncappedOptions = options with
+                {
+                    TargetError = levelSettings.CapErrorScale > 0 ? levelSettings.TargetError * levelSettings.CapErrorScale : EditorLodUncappedError,
+                };
+
+                MeshOptSimplifyResult SimplifyGroup(EditorLodGroupInput input, float groupFactor, MeshOptReducerOptions groupOptions)
+                    => MeshOptSimplifier.Simplify(
+                        input.Positions, input.Normals, input.Uvs, input.Indices, groupFactor, groupOptions,
+                        input.BoneEmbedding, input.BoneEmbedding.Length == 0 ? 0 : EditorLodEmbeddingSize, state.EditorLodBoneWeight, input.JointFlags);
 
                 for (var g = 0; g < parts.Length; g++)
                 {
@@ -346,15 +379,95 @@ namespace Editors.PackOptimizer.Core
                     if (boneEmbedding.Length != 0 || jointFlags.Length != 0)
                         pendingSkinned++;
 
-                    var simplified = MeshOptSimplifier.Simplify(
-                        positions, normals, uvs, indexArray, factor, options,
-                        boneEmbedding, boneEmbedding.Length == 0 ? 0 : EditorLodEmbeddingSize, state.EditorLodBoneWeight, jointFlags);
+                    var input = new EditorLodGroupInput(vertices, positions, normals, uvs, indexArray, boneEmbedding, jointFlags);
+                    // With the hard cap the old part's triangle count is the ceiling; detected rigids follow the
+                    // factor schedule, so this is the same target in practice.
+                    var groupFactor = hardCap
+                        ? EditorLodCappedFactor(factor, parts[g].Mesh.IndexList.Length / 3, indexArray.Length)
+                        : factor;
+                    var simplified = SimplifyGroup(input, groupFactor, options);
                     if (simplified.Stats.ReductionSkipped)
                     {
                         pendingNotReduced++;
                         continue;
                     }
 
+                    if (!simplified.Stats.TargetReached)
+                    {
+                        // meshoptimizer stops at the last collapse under the cap, so a result error close to
+                        // the cap (not only at it) means the cap, not the topology, ended the reduction.
+                        var errorLimited = simplified.Stats.ErrorLimited ||
+                            simplified.Stats.ResultErrorRelative >= EditorLodErrorLimitedShare * levelSettings.TargetError;
+                        if (errorLimited)
+                            pendingError++;
+                        else
+                            pendingTopology++;
+
+                        // The miss reason is a guess (meshopt can stop well under the cap when the next collapse
+                        // jumps past it), so a capped level re-runs every miss and keeps the lighter result.
+                        if (hardCap)
+                        {
+                            var rerun = SimplifyGroup(input, groupFactor, uncappedOptions);
+                            if (!rerun.Stats.ReductionSkipped && rerun.Stats.AchievedTriangleCount < simplified.Stats.AchievedTriangleCount)
+                            {
+                                simplified = rerun;
+                                pastCapError[g] = rerun.Stats.ResultErrorRelative;
+                            }
+                        }
+                    }
+
+                    inputs[g] = input;
+                    simplifiedParts[g] = simplified;
+                    targets[g] = simplified.Stats.RequestedTriangleCount;
+                }
+
+                if (hardCap)
+                {
+                    // Parts stuck above their target (seams, topology) push the LOD over the old count; take the
+                    // overage from the parts that reached theirs, in proportion to their targets, at most half each.
+                    var overage = 0L;
+                    var takerTargets = 0L;
+                    for (var g = 0; g < parts.Length; g++)
+                    {
+                        if (simplifiedParts[g] is not { } part)
+                            continue;
+                        if (part.Stats.AchievedTriangleCount > targets[g])
+                            overage += part.Stats.AchievedTriangleCount - targets[g];
+                        else
+                            takerTargets += targets[g];
+                    }
+
+                    if (overage > 0 && takerTargets > 0)
+                    {
+                        for (var g = 0; g < parts.Length; g++)
+                        {
+                            if (simplifiedParts[g] is not { } part || part.Stats.AchievedTriangleCount > targets[g])
+                                continue;
+
+                            var share = (int)Math.Min(targets[g] / 2, (long)Math.Ceiling(overage * (double)targets[g] / takerTargets));
+                            if (share <= 0)
+                                continue;
+
+                            var input = inputs[g]!;
+                            var rerun = SimplifyGroup(
+                                input, EditorLodCappedFactor(1f, targets[g] - share, input.Indices.Length), uncappedOptions);
+                            if (rerun.Stats.ReductionSkipped || rerun.Stats.AchievedTriangleCount >= part.Stats.AchievedTriangleCount)
+                                continue;
+
+                            simplifiedParts[g] = rerun;
+                            pastCapError[g] = rerun.Stats.ResultErrorRelative;
+                            pendingShared++;
+                        }
+                    }
+                }
+
+                for (var g = 0; g < parts.Length; g++)
+                {
+                    if (simplifiedParts[g] is not { } simplified)
+                        continue;
+
+                    var vertices = inputs[g]!.Vertices;
+                    var indexArray = inputs[g]!.Indices;
                     if (state.EditorLodReportSkinningError)
                     {
                         var vanished = FindVanishedComponents(vertices, indexArray, simplified, rigidPath, lod, g, out var sourceComponents);
@@ -386,26 +499,18 @@ namespace Editors.PackOptimizer.Core
 
                     rebuilt[g] = new RmvMesh { VertexList = output, IndexList = simplified.Indices };
                     pendingRebuilt++;
-                    if (!simplified.Stats.TargetReached)
-                    {
-                        // meshoptimizer stops at the last collapse under the cap, so a result error close to
-                        // the cap (not only at it) means the cap, not the topology, ended the reduction.
-                        if (simplified.Stats.ErrorLimited ||
-                            simplified.Stats.ResultErrorRelative >= EditorLodErrorLimitedShare * levelSettings.TargetError)
-                            pendingError++;
-                        else
-                            pendingTopology++;
-                    }
                 }
 
                 var newTriangles = 0L;
                 for (var g = 0; g < parts.Length; g++)
                     newTriangles += (rebuilt[g] ?? parts[g].Mesh).IndexList.Length / 3;
+                var oldPartTriangles = parts.Select(model => model.Mesh.IndexList.Length / 3).ToArray();
+                var oldTriangles = oldPartTriangles.Sum(count => (long)count);
 
                 if (pendingRebuilt == 0 || newTriangles >= previousTriangles)
                 {
                     result.LodsKeptNotLighter++;
-                    previousTriangles = parts.Sum(model => (long)model.Mesh.IndexList.Length / 3);
+                    previousTriangles = oldTriangles;
                     continue;
                 }
 
@@ -456,6 +561,14 @@ namespace Editors.PackOptimizer.Core
                 result.PartsKeptNotReduced += pendingNotReduced;
                 result.PartsMissedTargetByError += pendingError;
                 result.PartsMissedTargetByTopology += pendingTopology;
+                for (var g = 0; g < parts.Length; g++)
+                {
+                    if (float.IsFinite(pastCapError[g]) && rebuilt[g] != null)
+                        result.PastCapParts.Add(new PastCapPart(rigidPath, lod, g, oldPartTriangles[g], rebuilt[g]!.IndexList.Length / 3, pastCapError[g]));
+                }
+                result.PartsGaveTopologyShare += pendingShared;
+                if (hardCap && newTriangles > oldTriangles)
+                    result.CappedLodsStillHeavier++;
                 previousTriangles = newTriangles;
                 anyReplaced = true;
             }
@@ -986,7 +1099,9 @@ namespace Editors.PackOptimizer.Core
                         $"{(r.Settings[level - 1].LockBorder ? "locked" : "free")}" +
                         (r.Settings[level - 1].Flags == EditorLodSimplifyFlags.None ? string.Empty : $" [{r.Settings[level - 1].Flags}]") +
                         (r.Settings[level - 1].AttributeScale == 1f ? string.Empty : $" attr x{r.Settings[level - 1].AttributeScale.ToString("0.###", inv)}") +
-                        (r.Settings[level - 1].Method == EditorLodSimplifyMethod.Update ? " update" : string.Empty))));
+                        (r.Settings[level - 1].Method == EditorLodSimplifyMethod.Update ? " update" : string.Empty) +
+                        (!r.Settings[level - 1].HardTriangleCap ? string.Empty
+                            : r.Settings[level - 1].CapErrorScale > 0 ? $" cap x{r.Settings[level - 1].CapErrorScale.ToString("0.###", inv)}" : " cap"))));
             string Tiers(Dictionary<EditorLodEvidence, int> counts)
                 => counts.Count == 0
                     ? "(none)"
@@ -1004,6 +1119,25 @@ namespace Editors.PackOptimizer.Core
                 $"parts kept (too small to reduce): {r.PartsKeptNotReduced:N0}");
             sb.AppendLine(
                 $"Rebuilt parts that missed the triangle target: error cap {r.PartsMissedTargetByError:N0}, topology/locked border {r.PartsMissedTargetByTopology:N0}");
+            if (r.Settings.Any(level => level.HardTriangleCap))
+            {
+                var errors = r.PastCapParts.Select(part => part.Error).Order().ToArray();
+                sb.AppendLine(
+                    $"Hard triangle cap: {errors.Length:N0} part(s) simplified past the error cap" +
+                    (errors.Length == 0
+                        ? string.Empty
+                        : $" (result error median {errors[errors.Length / 2].ToString("0.####", inv)}, " +
+                          $"p95 {errors[Math.Min(errors.Length - 1, (int)(errors.Length * 0.95))].ToString("0.####", inv)}, " +
+                          $"max {errors[^1].ToString("0.####", inv)})") +
+                    $"; {r.PartsGaveTopologyShare:N0} part(s) gave up triangles for parts stuck on topology; " +
+                    $"capped LODs still heavier than the old ones: {r.CappedLodsStillHeavier:N0}");
+                foreach (var part in r.PastCapParts.OrderByDescending(part => part.Error).ThenBy(part => part.Rigid, StringComparer.Ordinal).Take(15))
+                {
+                    sb.AppendLine(
+                        $"  past cap: error {part.Error.ToString("0.####", inv)}, LOD {part.Lod} part {part.Part}, " +
+                        $"triangles {part.OldTriangles:N0} -> {part.Triangles:N0}, {part.Rigid}");
+                }
+            }
             for (var level = 1; level < EditorLodMaxLevels; level++)
             {
                 if (r.LodsReplacedByLevel[level] == 0)

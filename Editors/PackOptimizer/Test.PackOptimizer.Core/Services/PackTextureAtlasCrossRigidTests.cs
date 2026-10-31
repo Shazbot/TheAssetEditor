@@ -18351,9 +18351,9 @@ namespace Test.PackOptimizer.Core
             Assert.Multiple(() =>
             {
                 Assert.That(settings(table, 1), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.02f, true)));
-                Assert.That(settings(table, 2), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.04f, true)));
-                Assert.That(settings(table, 3), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f)));
-                Assert.That(settings(table, 5), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f)));
+                Assert.That(settings(table, 2), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.04f, true, HardTriangleCap: true, CapErrorScale: 2f)));
+                Assert.That(settings(table, 3), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f)));
+                Assert.That(settings(table, 5), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, HardTriangleCap: true, CapErrorScale: 2f)));
                 Assert.That(
                     Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.08:free"),
                     Is.EqualTo(new[]
@@ -18361,6 +18361,97 @@ namespace Test.PackOptimizer.Core
                         new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.02f, true),
                         new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false),
                     }));
+            });
+        }
+
+        private static T EditorLodResult<T>(object state, string name)
+        {
+            var result = GetStateProperty<object>(state, "EditorLods");
+            return (T)result.GetType().GetProperty(name, AnyInstance)!.GetValue(result)!;
+        }
+
+        private static int[] EditorLodTriangles(RmvFile rigid)
+            => rigid.ModelList.Select(lod => lod.Sum(model => model.Mesh.IndexList.Length / 3)).ToArray();
+
+        [Test]
+        public void EditorLods_HardTriangleCap_KeepsErrorLimitedLodsAtTheOldTriangleCount()
+        {
+            // The grid's bumps are above a 0.0001 error cap, so the capped simplify stops early at LOD2.
+            Editors.PackOptimizer.Core.EditorLodLevelSettings Level(bool cap) => new(0.0001f, false, HardTriangleCap: cap);
+            var uncappedRigid = CreateEditorLodRigid(24);
+            var oldTriangles = EditorLodTriangles(uncappedRigid);
+            var (_, uncappedState, _) = RunEditorLodRemake(uncappedRigid, settings: [Level(false), Level(false), Level(false)]);
+            var cappedRigid = CreateEditorLodRigid(24);
+            var (_, cappedState, _) = RunEditorLodRemake(cappedRigid, settings: [Level(false), Level(true), Level(true)]);
+            var uncapped = EditorLodTriangles(uncappedRigid);
+            var capped = EditorLodTriangles(cappedRigid);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(EditorLodResult<IList>(uncappedState, "PastCapParts"), Is.Empty);
+                Assert.That(uncapped[2], Is.GreaterThan(oldTriangles[2]), "without the cap LOD2 is heavier than the old LOD2");
+                Assert.That(capped[2], Is.LessThanOrEqualTo(oldTriangles[2]));
+                Assert.That(capped[3], Is.LessThanOrEqualTo(oldTriangles[3]));
+                Assert.That(EditorLodResult<IList>(cappedState, "PastCapParts"), Is.Not.Empty);
+                Assert.That(EditorLodResult<int>(cappedState, "CappedLodsStillHeavier"), Is.Zero);
+                // LOD1 has no cap: it is rebuilt exactly as without one.
+                Assert.That(cappedRigid.ModelList[1][0].Mesh.IndexList, Is.EqualTo(uncappedRigid.ModelList[1][0].Mesh.IndexList));
+            });
+        }
+
+        [Test]
+        public void EditorLods_HardTriangleCap_TakesTheOverageOfAStuckPartFromTheOtherParts()
+        {
+            // Part 1 is 20 separate triangles: every vertex is on a locked border, so it cannot be reduced at all.
+            var rigid = CreateEditorLodRigid(24);
+            var loose = new List<CommonVertex>();
+            var looseIndices = new List<ushort>();
+            for (var i = 0; i < 20; i++)
+            {
+                foreach (var (x, y) in new[] { (0f, 0f), (1f, 0f), (0f, 1f) })
+                {
+                    looseIndices.Add((ushort)loose.Count);
+                    loose.Add(new CommonVertex
+                    {
+                        Position = new Vector4(100 + i * 3 + x, y, 0, 1),
+                        Normal = Vector3.UnitZ,
+                        BiNormal = Vector3.UnitY,
+                        Tangent = Vector3.UnitX,
+                        Uv = new Vector2(x, y),
+                        Uv1 = new Vector2(0.25f, 0.75f),
+                        Colour = new Vector4(0.2f, 0.4f, 0.6f, 1f),
+                        BoneIndex = [0, 2],
+                        BoneWeight = [0.75f, 0.25f],
+                        WeightCount = 2,
+                    });
+                }
+            }
+
+            for (var lod = 0; lod < 4; lod++)
+            {
+                var keep = lod == 0 ? 20 : (int)Math.Ceiling(20 * Editors.PackOptimizer.Core.EditorLodDetector.Factor(lod, 4));
+                var model = CreateWeightedModel(1f);
+                model.Mesh = new RmvMesh { VertexList = loose.ToArray(), IndexList = looseIndices.Take(keep * 3).ToArray() };
+                rigid.ModelList[lod] = [.. rigid.ModelList[lod], model];
+            }
+
+            rigid.RecalculateOffsets();
+            var oldLod3 = rigid.ModelList[3].Select(model => model.Mesh.IndexList.Length / 3).ToArray();
+            var (_, state, _) = RunEditorLodRemake(rigid, settings:
+            [
+                new(0.02f, true),
+                new(0.04f, true),
+                new(1f, true, HardTriangleCap: true),
+            ]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetStateProperty<HashSet<string>>(state, "EditorLodRemadeRigids"), Is.EquivalentTo(new[] { EditorLodRigidPath }));
+                Assert.That(rigid.ModelList[3][1].Mesh.IndexList.Length / 3, Is.EqualTo(20), "the stuck part keeps every triangle");
+                Assert.That(rigid.ModelList[3][0].Mesh.IndexList.Length / 3, Is.LessThanOrEqualTo(oldLod3[0] - (20 - oldLod3[1])));
+                Assert.That(EditorLodTriangles(rigid)[3], Is.LessThanOrEqualTo(oldLod3.Sum()));
+                Assert.That(EditorLodResult<int>(state, "PartsGaveTopologyShare"), Is.EqualTo(1));
+                Assert.That(EditorLodResult<int>(state, "CappedLodsStillHeavier"), Is.Zero);
             });
         }
 
@@ -18552,7 +18643,12 @@ namespace Test.PackOptimizer.Core
 
                 // Attribute scale first, flags second, and the old two-part syntax.
                 Assert.That(parse("0.08:free:attr2:clamped")[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.ErrorClamped, 2f)));
-                Assert.That(parse("0.02:locked,0.04:locked,0.08:free:attr0.5"), Is.EqualTo(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default));
+                Assert.That(parse("0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:cap2"), Is.EqualTo(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default));
+                Assert.That(parse("0.08:free:cap:attr0.5:nocap")[0].HardTriangleCap, Is.False);
+                Assert.That(parse("0.08:free:cap4")[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(
+                    0.08f, false, HardTriangleCap: true, CapErrorScale: 4f)));
+                Assert.That(parse("0.08:free:clamped:cap")[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(
+                    0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.ErrorClamped, HardTriangleCap: true)));
                 Assert.That(parse("0.02:locked,0.04:locked,0.08:free")[2], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false)));
                 Assert.That(flags, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None));
 
@@ -18962,6 +19058,11 @@ namespace Test.PackOptimizer.Core
             // 34: the cross-rigid physical budget drops from 16 to 4 MiB of generated geometry per expected army
             // draw. The golden fixture's payloads are far below either limit, so the hash is unchanged.
             [34] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
+            // 35: hard triangle cap on editor-LOD levels 2 and deeper (a rebuilt part that keeps more triangles than the
+            // old part is simplified again with twice the level's error cap, and the overage of parts stuck on topology
+            // comes from the other parts of the LOD). The editor-LOD fixture reaches its targets under the error cap,
+            // so the hash is unchanged.
+            [35] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
         };
 
         private static string ComputeOutputGoldenHash()
