@@ -19,6 +19,7 @@ using Shared.Core.Settings;
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:cap2] [--army-scope culture|subculture] [--sibling-scope model|pack]
 //                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--lod-weights w0,w1,w2,w3] [--xr-joint-cap N]
+//                      [--repack-min-set-kib N] [--repack-min-group-kib N]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -183,6 +184,16 @@ internal static class Program
         };
         if (CrossRigidBudgetSettings.Current != xrDefaults)
             Console.WriteLine($"Cross-rigid budget override: {CrossRigidBudgetSettings.Current}");
+
+        // Bench-only shared texture repack saving gates (defaults = production values).
+        var repackDefaults = SharedRepackThresholdSettings.Default;
+        SharedRepackThresholdSettings.Current = repackDefaults with
+        {
+            MinimumSetSavingBytes = (long)(XrDouble("repack-min-set-kib", repackDefaults.MinimumSetSavingBytes / 1024.0) * 1024.0),
+            MinimumGroupSavingBytes = (long)(XrDouble("repack-min-group-kib", repackDefaults.MinimumGroupSavingBytes / 1024.0) * 1024.0),
+        };
+        if (SharedRepackThresholdSettings.Current != repackDefaults)
+            Console.WriteLine($"Repack threshold override: {SharedRepackThresholdSettings.Current}");
 
         // Bench-only override of the scenario LOD distribution (LOD0..LOD3, normalized).
         if (options.TryGetValue("lod-weights", out var lodWeightsText))

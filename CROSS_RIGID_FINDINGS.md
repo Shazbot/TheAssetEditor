@@ -282,6 +282,24 @@ Bench runs on the Workshop `!ak_teb3` (output version 4 code, only the set thres
 - Two mod-owned textures stay in the output next to their repacked copies (another reference keeps them).
 - Output version 5.
 
+### Repack thresholds re-measured (2026-10-31; 128 KiB adopted, OutputVersion 36)
+
+The 2026-10-23 sweep ran on output version 4 (15 sets). The repack now builds 59 sets on TEB, so both gates were swept again on the workshop sources with the bench-only switches `--repack-min-set-kib` / `--repack-min-group-kib` (`SharedRepackThresholdSettings`). "Saved" is texture bytes replaced minus new bytes; the pack grows because cropped copies of vanilla textures are added while the originals stay in the game data. Raw results: `K:\projects\assedfork-bench\agent-scratch-repack\results.md`.
+
+| Set / group gate | TEB sets | TEB saved | TEB pack | Albion sets | Albion saved | Albion pack |
+|---|---|---|---|---|---|---|
+| 1 MiB / 512 KiB (old) | 59 | 329.6 MB | 574.1 MB | 31 | 259.7 MB | 667.5 MB |
+| 512 / 512 KiB | 67 | +6.3 | +3.7 | 33 | +1.7 | +1.2 |
+| 256 / 256 KiB | 70 | +8.5 | +6.6 | 34 | +2.5 | +1.5 |
+| **128 / 128 KiB (new)** | **73** | **+9.6** | **+7.9** | **34** | **+2.5** | **+1.5** |
+| 64 / 64 KiB | 74 | +9.9 | +15.0 | 34 | +2.5 | +1.5 |
+| 0 / 0 (ceiling) | 77 | +10.3 | +18.6 | 36 | +2.8 | +5.5 |
+
+- The old gates were byte-identical to v35, every run validated (WHMM `pack validate` against v35: no new diagnostics) and had zero pixel failures; repack time stayed 28-33 s.
+- The group gate barely matters (512 -> 256 KiB at a 512 KiB set gate: +1.0 MB TEB, +0.3 MB Albion).
+- 128 KiB was chosen by the user over 256 KiB (+1.1 MB TEB for +1.3 MB pack and 11 more rewritten rigids; Albion identical). 64 KiB adds 0.3 MB on TEB for +7.1 MB of pack and is rejected.
+- Rigids changed vs v35 at 128 KiB: 38 on TEB, 7 on Albion; they need the in-game check. New baselines teb-v36 / albion-v36 (equal to the 128/128 runs).
+
 ### Exact texture compaction (`PackTextureAtlasBatchService.TextureCompaction.cs`)
 
 Opt-in, "Compact textures exactly (experimental)", off by default and disabled in cross-rigid-only mode. It runs last, on the output's DDS files, and rewrites textures in place (same path, same sRGB-ness, same header kind).
@@ -882,6 +900,27 @@ Rejected, do not retry without a new reason:
 7. **A minimum-draws floor** (not run): payloads under 0.1 draws are 20 payloads, 13.7 MiB and 1.6 draws on TEB; bytes per draw is the better knob and already removes most of them.
 
 Related, same round: the opt-in opaque alpha-shader switch (OutputVersion 33) gives GPU time only. Every switched texture had alpha exactly 255, so compaction had already made it BC1 before the switch; no bytes are saved.
+
+## 2026-10-31: LOD3-only simplifier settings (none adopted yet)
+
+Goal: less LOD3 geometry. All runs on the v36 code with the skinning/shape report (`--editor-lod-skinning-report true`), TEB and Albion workshop sources, LOD1/2 unchanged. New bench-only tokens for `--editor-lod-levels`: `boneN` (per-level factor on `EditorLodBoneWeight`, default 1) and `prunemaxN` (prune guard, below). Prune no longer runs in the hard cap's re-runs (2x error): pruning only happens in the first pass (default output unchanged, prune is off).
+
+| LOD3 setting (on top of attr0.5 cap2) | TEB LOD3 tris | TEB shape mean | TEB skin mean | Albion LOD3 tris | Albion shape mean | Albion skin mean |
+|---|---|---|---|---|---|---|
+| v36 (bone x1) | 259,649 | 0.00660 | 0.1107 | 237,773 | 0.00532 | 0.1244 |
+| attr0.25 | -0.05 % | 0.00663 | 0.1115 | -0.02 % | 0.00534 | 0.1240 |
+| bone x0.5 | -0.1 % | 0.00619 | 0.1142 | -0.04 % | 0.00465 | 0.1245 |
+| bone x0 | -0.2 % | 0.00579 | 0.1370 | -0.03 % | 0.00393 | 0.1648 |
+| clamped (bone x1 / x0.5) | -0.04 % / -0.1 % | 0.00659 / 0.00619 | 0.1116 / 0.1146 | -0.04 % / -0.06 % | 0.00511 / 0.00467 | 0.1268 / 0.1248 |
+| clamped+prune, bone x0.5, prune in every pass | -0.7 % | 0.00628 | 0.1159 | -4.8 % | 0.00505 | 0.1276 |
+| same, prune first pass only | -0.5 % | 0.00618 | 0.1148 | -2.4 % | 0.00494 | 0.1253 |
+| same + guard 0.05 / 0.1 | -0.1 % / -0.1 % | 0.00619 / 0.00620 | 0.1146 | -0.05 % / -0.2 % | 0.00469 / 0.00467 | 0.1246 |
+
+- **LOD3 sits at the hard triangle cap**, so attribute and bone weights change which triangles survive, not how many. attr0.25 is slightly worse everywhere and moves UVs (Albion repack -0.5 MB): rejected.
+- **clamped does nothing** (as on 2026-10-28): about 100 fewer LOD3 triangles, and nothing on top of bone x0.5. Rejected.
+- **bone x0.5 is a quality option**: shape error -6 % (TEB) / -13 % (Albion), vanished LOD0 triangles -14 % / -19 %, skinning +3 % / 0 %; LOD3 bytes +0.5 % / +0.8 %. bone x0 costs +24 % / +32 % skinning: rejected. Not adopted pending the user's decision and an in-game look.
+- **Prune's geometry cut is deleted pieces.** Every pass: `teb_paymaster_wagon` 484-tri piece (0.45 m), `ak_lucy_steed` 496/420-tri pieces (0.65 m), `vir_forsaken_torso_02/_03` 1,796-tri piece. First pass only: the wagon piece and 230-350-tri torso pieces still go. With the size guard (a pruned part is redone without prune when a removed piece's diagonal exceeds the share of the part's LOD0 diagonal; 125 / 66 parts redone on TEB at 0.05 / 0.1) every large piece survives and the cut is gone (TEB -49 tris vs bone x0.5 alone). Prune stays off; the first-pass rule and the guard stay as its safety net.
+- Repack sets and savings are unchanged in every run. Albion's pack size moves by 1-4 MB between runs because the changed LOD3 geometry changes which cross-rigid payloads are picked.
 
 ## Open issues
 

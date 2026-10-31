@@ -10148,12 +10148,16 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
-        public void SharedRepack_DefaultThresholdIsOneMiB()
+        public void SharedRepack_DefaultThresholdsAre128KiB()
         {
             Assert.That(
                 GetServiceType().GetField("SharedRepackMinimumSavingBytes", BindingFlags.NonPublic | BindingFlags.Static)!
                     .GetRawConstantValue(),
-                Is.EqualTo(1L * 1024 * 1024));
+                Is.EqualTo(128L * 1024));
+            Assert.That(
+                GetServiceType().GetField("SharedRepackMinimumGroupSavingBytes", BindingFlags.NonPublic | BindingFlags.Static)!
+                    .GetRawConstantValue(),
+                Is.EqualTo(128L * 1024));
         }
 
         // Part 2 uses base b1 with a normal that cannot be repacked (48 pixels, not a power of
@@ -18921,6 +18925,25 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void EditorLods_LevelSyntax_ParsesThePerLevelBoneWeightScale()
+        {
+            var parsed = Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.08:free:attr0.5:bone0.25:cap2");
+            Assert.Multiple(() =>
+            {
+                Assert.That(parsed[0].BoneWeightScale, Is.EqualTo(1f));
+                Assert.That(parsed[1].BoneWeightScale, Is.EqualTo(0.25f));
+                Assert.That(parsed[1].AttributeScale, Is.EqualTo(0.5f));
+                Assert.That(parsed[1].CapErrorScale, Is.EqualTo(2f));
+                Assert.That(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default.All(x => x.BoneWeightScale == 1f), Is.True);
+                Assert.Throws<ArgumentException>(() => Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.08:free:bone-1"));
+                var pruned = Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.04:locked,0.08:free:clamped+prune:prunemax0.1:cap2");
+                Assert.That(pruned[2].PruneMaxPieceSize, Is.EqualTo(0.1f));
+                Assert.That(pruned[2].Flags, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyFlags.ErrorClamped | Editors.PackOptimizer.Core.EditorLodSimplifyFlags.Prune));
+                Assert.That(parsed[1].PruneMaxPieceSize, Is.EqualTo(0.05f));
+            });
+        }
+
+        [Test]
         public void EditorLods_OptionDefaultsToOff_AndTheVersionIsBumped()
         {
             Assert.That(new Editors.PackOptimizer.Core.PackOptimizerOptions().RemakeEditorLods, Is.False);
@@ -19063,6 +19086,9 @@ namespace Test.PackOptimizer.Core
             // comes from the other parts of the LOD). The editor-LOD fixture reaches its targets under the error cap,
             // so the hash is unchanged.
             [35] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
+            // 36: the shared texture repack builds sets and layout groups saving at least 128 KiB (was 1 MiB per
+            // set, 512 KiB per group); the repack is not among the pinned stages, so the hash is unchanged.
+            [36] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
         };
 
         private static string ComputeOutputGoldenHash()

@@ -57,7 +57,9 @@ namespace Editors.PackOptimizer.Core
         float AttributeScale = 1f,
         EditorLodSimplifyMethod Method = EditorLodSimplifyMethod.Attributes,
         bool HardTriangleCap = false,
-        float CapErrorScale = 0f)
+        float CapErrorScale = 0f,
+        float BoneWeightScale = 1f,
+        float PruneMaxPieceSize = 0.05f)
     {
         /// <summary>The first LOD level (1-based) on which <see cref="EditorLodSimplifyFlags.Prune"/> may be used.</summary>
         public const int FirstPruneLevel = 3;
@@ -86,6 +88,10 @@ namespace Editors.PackOptimizer.Core
                     throw new ArgumentException($"Editor LOD level {level}: the error cap must be finite and not negative.");
                 if (!float.IsFinite(entry.AttributeScale) || entry.AttributeScale < 0)
                     throw new ArgumentException($"Editor LOD level {level}: the attribute scale must be finite and not negative.");
+                if (!float.IsFinite(entry.PruneMaxPieceSize) || entry.PruneMaxPieceSize < 0)
+                    throw new ArgumentException($"Editor LOD level {level}: the prune piece size limit must be finite and not negative.");
+                if (!float.IsFinite(entry.BoneWeightScale) || entry.BoneWeightScale < 0)
+                    throw new ArgumentException($"Editor LOD level {level}: the bone weight scale must be finite and not negative.");
                 if (!float.IsFinite(entry.CapErrorScale) || entry.CapErrorScale < 0)
                     throw new ArgumentException($"Editor LOD level {level}: the cap error scale must be finite and not negative.");
                 if (entry.Flags.HasFlag(EditorLodSimplifyFlags.Prune) && level < FirstPruneLevel)
@@ -98,8 +104,11 @@ namespace Editors.PackOptimizer.Core
         /// <summary>
         /// Parses "error:locked|free[:flags][:attrScale][:cap]" entries separated by commas, for example
         /// "0.02:locked:folds+reglight,0.04:locked:folds:cap,0.08:free:prune+clamped:attr0.5:cap". Flags are joined with '+'
-        /// (folds, reglight, clamped, prune). The flags, the attribute scale, the method (update, attributes) and the
-        /// hard triangle cap (cap, capN = re-runs bounded to N times the error cap, nocap) are optional and may come in any order.
+        /// (folds, reglight, clamped, prune). The flags, the attribute scale, the bone weight scale (boneN, a factor on
+        /// EditorLodBoneWeight for that level), the prune guard (prunemaxN: a pruned part is redone without prune when a
+        /// removed piece's diagonal exceeds N times the part's LOD0 diagonal; default 0.05), the method (update,
+        /// attributes) and the hard triangle cap (cap, capN = re-runs bounded to N times the error cap, nocap) are
+        /// optional and may come in any order.
         /// </summary>
         public static IReadOnlyList<EditorLodLevelSettings> Parse(string text)
         {
@@ -112,6 +121,8 @@ namespace Editors.PackOptimizer.Core
                     var method = EditorLodSimplifyMethod.Attributes;
                     var cap = false;
                     var capScale = 0f;
+                    var boneScale = 1f;
+                    var pruneMax = 0.05f;
                     foreach (var extra in pieces.Skip(2))
                     {
                         if (extra.Equals("nocap", StringComparison.OrdinalIgnoreCase))
@@ -137,6 +148,18 @@ namespace Editors.PackOptimizer.Core
                         if (extra.Equals("attributes", StringComparison.OrdinalIgnoreCase))
                         {
                             method = EditorLodSimplifyMethod.Attributes;
+                            continue;
+                        }
+
+                        if (extra.StartsWith("prunemax", StringComparison.OrdinalIgnoreCase))
+                        {
+                            pruneMax = float.Parse(extra[8..], System.Globalization.CultureInfo.InvariantCulture);
+                            continue;
+                        }
+
+                        if (extra.StartsWith("bone", StringComparison.OrdinalIgnoreCase))
+                        {
+                            boneScale = float.Parse(extra[4..], System.Globalization.CultureInfo.InvariantCulture);
                             continue;
                         }
 
@@ -166,7 +189,9 @@ namespace Editors.PackOptimizer.Core
                         scale,
                         method,
                         cap,
-                        capScale);
+                        capScale,
+                        boneScale,
+                        pruneMax);
                 })
                 .ToArray();
             return Validate(table);
@@ -269,7 +294,7 @@ namespace Editors.PackOptimizer.Core
         /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
         /// stages next to this number, so changing the output without bumping the version fails the test.
         /// </summary>
-        public const int OutputVersion = 35;
+        public const int OutputVersion = 36;
 
         /// <summary>
         /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format

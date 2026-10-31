@@ -56,6 +56,8 @@ namespace Editors.PackOptimizer.Core
             // for parts stuck on topology, and capped LODs that stayed heavier than the old ones anyway.
             public List<PastCapPart> PastCapParts { get; } = [];
             public int PartsGaveTopologyShare { get; set; }
+            // Prune guard: pruned parts redone without prune because a removed piece was above the level's size limit.
+            public int PrunedPartsRedone { get; set; }
             public int CappedLodsStillHeavier { get; set; }
             public IReadOnlyList<EditorLodLevelSettings> Settings { get; set; } = EditorLodLevelSettings.Default;
             public float BoneWeight { get; set; }
@@ -285,6 +287,7 @@ namespace Editors.PackOptimizer.Core
                 var groups = maps[lod - 1];
                 var factor = (float)EditorLodDetector.Factor(lod, lodCount);
                 var levelSettings = EditorLodLevelSettings.For(state.EditorLodSettings, lod);
+                var levelBoneWeight = state.EditorLodBoneWeight * levelSettings.BoneWeightScale;
                 var defaultOptions = new MeshOptReducerOptions();
                 var options = new MeshOptReducerOptions
                 {
@@ -310,6 +313,7 @@ namespace Editors.PackOptimizer.Core
                 var pendingSnapped = 0;
                 var pendingUpdated = 0;
                 var pendingShared = 0;
+                var pendingPruneRedone = 0;
                 var surfaces = new (Vector3[] Positions, ushort[] Indices)?[parts.Length];
                 var inputs = new EditorLodGroupInput?[parts.Length];
                 var simplifiedParts = new MeshOptSimplifyResult?[parts.Length];
@@ -317,15 +321,18 @@ namespace Editors.PackOptimizer.Core
                 // Result error of parts the hard triangle cap simplified without the error cap (NaN: not past the cap).
                 var pastCapError = Enumerable.Repeat(float.NaN, parts.Length).ToArray();
                 var hardCap = levelSettings.HardTriangleCap;
+                // The cap's re-runs never prune: at the raised error, prune would remove loose pieces far larger than
+                // the level's own error allows. Pruning (when the level asks for it) only happens in the first pass.
                 var uncappedOptions = options with
                 {
                     TargetError = levelSettings.CapErrorScale > 0 ? levelSettings.TargetError * levelSettings.CapErrorScale : EditorLodUncappedError,
+                    Prune = false,
                 };
 
                 MeshOptSimplifyResult SimplifyGroup(EditorLodGroupInput input, float groupFactor, MeshOptReducerOptions groupOptions)
                     => MeshOptSimplifier.Simplify(
                         input.Positions, input.Normals, input.Uvs, input.Indices, groupFactor, groupOptions,
-                        input.BoneEmbedding, input.BoneEmbedding.Length == 0 ? 0 : EditorLodEmbeddingSize, state.EditorLodBoneWeight, input.JointFlags);
+                        input.BoneEmbedding, input.BoneEmbedding.Length == 0 ? 0 : EditorLodEmbeddingSize, levelBoneWeight, input.JointFlags);
 
                 for (var g = 0; g < parts.Length; g++)
                 {
@@ -372,7 +379,7 @@ namespace Editors.PackOptimizer.Core
                     var skinned = EditorLodWeightCount(parts[g]) > 0;
                     float[] boneEmbedding = [];
                     byte[] jointFlags = [];
-                    if (skinned && state.EditorLodBoneWeight > 0)
+                    if (skinned && levelBoneWeight > 0)
                         boneEmbedding = BuildEditorLodBoneEmbedding(vertices);
                     if (skinned && state.EditorLodJointPriority)
                         jointFlags = BuildEditorLodJointFlags(vertices, indexArray);
@@ -386,6 +393,13 @@ namespace Editors.PackOptimizer.Core
                         ? EditorLodCappedFactor(factor, parts[g].Mesh.IndexList.Length / 3, indexArray.Length)
                         : factor;
                     var simplified = SimplifyGroup(input, groupFactor, options);
+                    if (options.Prune && !simplified.Stats.ReductionSkipped &&
+                        PrunedEditorLodPieceTooLarge(vertices, indexArray, simplified, levelSettings.PruneMaxPieceSize))
+                    {
+                        simplified = SimplifyGroup(input, groupFactor, options with { Prune = false });
+                        pendingPruneRedone++;
+                    }
+
                     if (simplified.Stats.ReductionSkipped)
                     {
                         pendingNotReduced++;
@@ -567,6 +581,7 @@ namespace Editors.PackOptimizer.Core
                         result.PastCapParts.Add(new PastCapPart(rigidPath, lod, g, oldPartTriangles[g], rebuilt[g]!.IndexList.Length / 3, pastCapError[g]));
                 }
                 result.PartsGaveTopologyShare += pendingShared;
+                result.PrunedPartsRedone += pendingPruneRedone;
                 if (hardCap && newTriangles > oldTriangles)
                     result.CappedLodsStillHeavier++;
                 previousTriangles = newTriangles;
@@ -578,6 +593,28 @@ namespace Editors.PackOptimizer.Core
 
         // LOD0 components (vertices welded by position, then joined by triangles) that have no triangle in the
         // simplified result: what the simplifier (or prune) made disappear.
+        // True when the simplified part lost a LOD0 piece whose bounding diagonal is above maxShare of the part's own
+        // LOD0 diagonal. Pieces can also vanish without prune; the caller only redoes the part, so a piece that a
+        // plain simplify removes as well stays removed.
+        private static bool PrunedEditorLodPieceTooLarge(
+            CommonVertex[] vertices, ushort[] indices, MeshOptSimplifyResult simplified, float maxShare)
+        {
+            if (vertices.Length == 0)
+                return false;
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+            foreach (var vertex in vertices)
+            {
+                var p = new Vector3(vertex.Position.X, vertex.Position.Y, vertex.Position.Z);
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
+            }
+
+            var limit = (max - min).Length() * maxShare;
+            return FindVanishedComponents(vertices, indices, simplified, string.Empty, 0, 0, out _)
+                .Any(piece => piece.Size.Length() > limit);
+        }
+
         private static List<VanishedComponent> FindVanishedComponents(
             CommonVertex[] vertices, ushort[] indices, MeshOptSimplifyResult simplified, string rigidPath, int lod, int part, out int sourceComponents)
         {
@@ -1099,6 +1136,7 @@ namespace Editors.PackOptimizer.Core
                         $"{(r.Settings[level - 1].LockBorder ? "locked" : "free")}" +
                         (r.Settings[level - 1].Flags == EditorLodSimplifyFlags.None ? string.Empty : $" [{r.Settings[level - 1].Flags}]") +
                         (r.Settings[level - 1].AttributeScale == 1f ? string.Empty : $" attr x{r.Settings[level - 1].AttributeScale.ToString("0.###", inv)}") +
+                        (r.Settings[level - 1].BoneWeightScale == 1f ? string.Empty : $" bone x{r.Settings[level - 1].BoneWeightScale.ToString("0.###", inv)}") +
                         (r.Settings[level - 1].Method == EditorLodSimplifyMethod.Update ? " update" : string.Empty) +
                         (!r.Settings[level - 1].HardTriangleCap ? string.Empty
                             : r.Settings[level - 1].CapErrorScale > 0 ? $" cap x{r.Settings[level - 1].CapErrorScale.ToString("0.###", inv)}" : " cap"))));
@@ -1131,6 +1169,15 @@ namespace Editors.PackOptimizer.Core
                           $"max {errors[^1].ToString("0.####", inv)})") +
                     $"; {r.PartsGaveTopologyShare:N0} part(s) gave up triangles for parts stuck on topology; " +
                     $"capped LODs still heavier than the old ones: {r.CappedLodsStillHeavier:N0}");
+                if (r.Settings.Any(level => level.Flags.HasFlag(EditorLodSimplifyFlags.Prune)))
+                {
+                    sb.AppendLine(
+                        $"Prune guard: {r.PrunedPartsRedone:N0} pruned part(s) redone without prune (a removed piece above the level's limit: " +
+                        string.Join(", ", Enumerable.Range(1, r.Settings.Count)
+                            .Where(level => r.Settings[level - 1].Flags.HasFlag(EditorLodSimplifyFlags.Prune))
+                            .Select(level => $"LOD{level} {r.Settings[level - 1].PruneMaxPieceSize.ToString("0.###", inv)} of the part's diagonal")) + ")");
+                }
+
                 foreach (var part in r.PastCapParts.OrderByDescending(part => part.Error).ThenBy(part => part.Rigid, StringComparer.Ordinal).Take(15))
                 {
                     sb.AppendLine(

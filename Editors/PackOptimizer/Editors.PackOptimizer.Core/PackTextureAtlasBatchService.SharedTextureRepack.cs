@@ -45,11 +45,13 @@ namespace Editors.PackOptimizer.Core
         //    finest source resolution, so no tuple loses pixels; coarser slots are
         //    replicated up (nearest, exact copies) and the overhead is reported.
         private static readonly TimeSpan SharedRepackAnalysisBudget = TimeSpan.FromMinutes(10);
-        // A set is only built when it saves at least this much, estimated AND actual. 1 MiB keeps
-        // most of what 512 KiB adds on !ak_teb3 (69.4 of 71.9 MB) with fewer tiny sets.
-        private const long SharedRepackMinimumSavingBytes = 1L * 1024 * 1024;
+        // A set is only built when it saves at least this much, estimated AND actual. 128 KiB (was 1 MiB
+        // until output 36): the 2026-10-31 sweep gained TEB +9.6 MB / Albion +2.5 MB; 64 KiB added 0.3 MB on
+        // TEB for +7.1 MB of pack (CROSS_RIGID_FINDINGS.md, 2026-10-31).
+        internal const long SharedRepackMinimumSavingBytes = 128L * 1024;
         // A layout group is only built when it saves at least this much (and more than nothing).
-        private const long SharedRepackMinimumGroupSavingBytes = 512L * 1024;
+        // 128 KiB (was 512 KiB until output 36), swept together with the set gate.
+        internal const long SharedRepackMinimumGroupSavingBytes = 128L * 1024;
         private const int SharedRepackMaximumSide = 4096;
         // Mip 2 and 3 are compared against the source's own level; the levels the block copy
         // covers must be exact, the others get this looser tolerance.
@@ -1623,8 +1625,8 @@ namespace Editors.PackOptimizer.Core
         {
             var result = new SharedTextureRepackResult
             {
-                MinimumSavingBytes = minimumSavingBytes ?? SharedRepackMinimumSavingBytes,
-                MinimumGroupSavingBytes = minimumGroupSavingBytes ?? SharedRepackMinimumGroupSavingBytes,
+                MinimumSavingBytes = minimumSavingBytes ?? SharedRepackThresholdSettings.Current.MinimumSetSavingBytes,
+                MinimumGroupSavingBytes = minimumGroupSavingBytes ?? SharedRepackThresholdSettings.Current.MinimumGroupSavingBytes,
                 MaximumSide = maximumSide ?? SharedRepackMaximumSide,
             };
             state.SharedTextureRepack = result;
