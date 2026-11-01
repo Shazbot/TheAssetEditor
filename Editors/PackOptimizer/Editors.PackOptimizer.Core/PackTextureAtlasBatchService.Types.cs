@@ -384,7 +384,37 @@ namespace Editors.PackOptimizer.Core
             string WsModelPath,
             string RigidPath,
             long VertexCount,
-            long GeometryBytes);
+            long GeometryBytes,
+            int[] MeshPartCounts);
+
+        private sealed record CrossRigidExpectedDrawCallPayloadDelta(
+            string GeneratedPayloadId,
+            double DeltaDrawCalls,
+            double InstanceDrawsSaved,
+            double DeltaPerInstanceDraw);
+
+        private sealed record CrossRigidExpectedDrawCallSourceDelta(
+            string RigidPath,
+            double ProbabilityBefore,
+            double ProbabilityAfter,
+            double ExpectedMeshParts);
+
+        private sealed record CrossRigidExpectedDrawCallEvaluation(
+            double Before,
+            double After,
+            double Delta,
+            CrossRigidExpectedDrawCallPayloadDelta[] PerPayload,
+            CrossRigidExpectedDrawCallSourceDelta[] SourceRigids);
+
+        private sealed record CrossRigidExpectedDrawCallDrop(
+            string GeneratedPayloadId,
+            double InstanceDrawsGivenUp);
+
+        private sealed record CrossRigidExpectedDrawCallGateReport(
+            CrossRigidExpectedDrawCallEvaluation Evaluation,
+            double Limit,
+            CrossRigidExpectedDrawCallDrop[] DroppedPayloads,
+            double InstanceDrawsGivenUp);
 
         private sealed record CrossRigidGeneratedSourcePart(
             int InstanceIndex,
@@ -517,6 +547,7 @@ namespace Editors.PackOptimizer.Core
             GlobalGrowthCapExceeded,
             PerPayloadPhysicalCostCeilingExceeded,
             PerPayloadResidentCostCeilingExceeded,
+            RejectedDrawCallIncrease,
         }
 
         private sealed record CrossRigidPayloadSelectionEntry(
@@ -731,12 +762,17 @@ namespace Editors.PackOptimizer.Core
                 CrossRigidGeneratedPayloadAnalysisEntries { get; } = [];
             public List<CrossRigidPayloadSelectionEntry>
                 CrossRigidPayloadSelectionEntries { get; } = [];
+            public CrossRigidExpectedDrawCallGateReport?
+                CrossRigidExpectedDrawCallGateReport { get; set; }
             public HashSet<string> CrossRigidSelectedPayloadIds { get; } =
                 new(StringComparer.Ordinal);
             public HashSet<string> CrossRigidSelectedRewriteOccurrenceKeys { get; } =
                 new(StringComparer.Ordinal);
             public Dictionary<string, HashSet<string>>
                 CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey { get; } =
+                    new(StringComparer.Ordinal);
+            public Dictionary<string, double>
+                CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey { get; } =
                     new(StringComparer.Ordinal);
             public Dictionary<
                 string,

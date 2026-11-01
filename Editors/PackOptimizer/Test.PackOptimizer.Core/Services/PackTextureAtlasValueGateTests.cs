@@ -1149,7 +1149,7 @@ namespace Test.PackOptimizer.Core
             return state;
         }
 
-        private static object CreateSyntheticArmyResidencyModelForFallbackTest()
+        internal static object CreateSyntheticArmyResidencyModelForFallbackTest()
         {
             var assembly = Assembly.Load("Editors.PackOptimizer.Core");
             var serviceType = assembly.GetType(

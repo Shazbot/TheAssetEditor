@@ -961,6 +961,7 @@ namespace Editors.PackOptimizer.Core
                 crossRigidAnalysisStage.Elapsed;
             crossRigidAnalysisStage.Restart();
             SelectCrossRigidGeneratedPayloads(state);
+            ApplyCrossRigidExpectedDrawCallIncreaseGate(state);
             state.CrossRigidTimingDetails["Analyze: select payload portfolio"] =
                 crossRigidAnalysisStage.Elapsed;
         }
@@ -4824,7 +4825,10 @@ namespace Editors.PackOptimizer.Core
                 item.Component.WsModelPath,
                 item.Component.RigidPath,
                 vertices,
-                geometryBytes);
+                geometryBytes,
+                item.Component.Rigid.ModelList
+                    .Select(lod => lod.Length)
+                    .ToArray());
         }
 
         private static void RecordCrossRigidWsModelOccurrenceProbabilities(

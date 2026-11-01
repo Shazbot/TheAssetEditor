@@ -2088,6 +2088,7 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 sb.AppendLine();
+                AppendCrossRigidExpectedBattleDrawCallReport(sb, state);
                 sb.AppendLine("Cross-rigid merge emission");
                 sb.AppendLine("--------------------------");
                 var selectedRewritePlanCount =

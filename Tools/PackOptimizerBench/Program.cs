@@ -18,7 +18,7 @@ using Shared.Core.Settings;
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:bone0.5:cap2] [--army-scope culture|subculture] [--sibling-scope model|pack]
-//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--lod-weights w0,w1,w2,w3] [--xr-joint-cap N]
+//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--xr-max-drawcall-increase N|inf] [--lod-weights w0,w1,w2,w3] [--xr-joint-cap N]
 //                      [--repack-min-set-kib N] [--repack-min-group-kib N]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
@@ -174,6 +174,15 @@ internal static class Program
         double XrDouble(string key, double fallback) => options.TryGetValue(key, out var text)
             ? double.Parse(text, CultureInfo.InvariantCulture)
             : fallback;
+        double XrMaxExpectedDrawCallIncrease()
+        {
+            if (!options.TryGetValue("xr-max-drawcall-increase", out var text))
+                return xrDefaults.MaxExpectedDrawCallIncrease;
+            if (text.Equals("inf", StringComparison.OrdinalIgnoreCase))
+                return double.PositiveInfinity;
+            return double.Parse(text, CultureInfo.InvariantCulture);
+        }
+
         CrossRigidBudgetSettings.Current = xrDefaults with
         {
             GeneratedGeometryBytesPerExpectedArmyDraw = (long)(XrDouble("xr-physical-mib-per-draw", xrDefaults.GeneratedGeometryBytesPerExpectedArmyDraw / 1048576.0) * 1048576.0),
@@ -181,7 +190,18 @@ internal static class Program
             GeneratedGeometryGrowthBytes = (long)(XrDouble("xr-growth-cap-mib", xrDefaults.GeneratedGeometryGrowthBytes / 1048576.0) * 1048576.0),
             MinimumSingleVmdExpectedArmyDraw = XrDouble("xr-min-single-vmd-draws", xrDefaults.MinimumSingleVmdExpectedArmyDraw),
             MaxJointStateCombinations = (int)XrDouble("xr-joint-cap", xrDefaults.MaxJointStateCombinations),
+            MaxExpectedDrawCallIncrease = XrMaxExpectedDrawCallIncrease(),
         };
+        try
+        {
+            CrossRigidBudgetSettings.Current.Validate();
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return 2;
+        }
+
         if (CrossRigidBudgetSettings.Current != xrDefaults)
             Console.WriteLine($"Cross-rigid budget override: {CrossRigidBudgetSettings.Current}");
 

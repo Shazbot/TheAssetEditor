@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Xml;
 using System.Numerics;
+using Editors.PackOptimizer.Core;
 using Moq;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.LodHeader;
@@ -20068,6 +20069,8 @@ namespace Test.PackOptimizer.Core
             // 43: verified building-worldspace emissive masks use a shared-repack copy path; the
             // pinned stages do not include shared-repack output, so this is unchanged.
             [43] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 44: the default cross-rigid expected draw-call gate is added; the pinned stage fixture does not run selection.
+            [44] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()
@@ -20180,6 +20183,558 @@ namespace Test.PackOptimizer.Core
             Add("army", Encoding.UTF8.GetBytes(PackTextureAtlasValueGateTests.DescribeArmyModel(armyModel)));
 
             return Convert.ToHexString(hash.GetHashAndReset());
+        }
+
+        private static (HashSet<string> SelectedPayloadIds, string[] DroppedPayloadIds, double InstanceDrawsGivenUp, double Delta)
+            PruneDrawCallPayloadsForTest(
+                IEnumerable<string> selectedPayloadIds,
+                double limit,
+                IReadOnlyDictionary<string, double> drawsSaved,
+                Func<IReadOnlySet<string>, double> evaluateDelta)
+        {
+            var result = GetStaticMethod("PruneCrossRigidPayloadsToDrawCallIncreaseLimit")
+                .Invoke(null, [selectedPayloadIds, limit, drawsSaved, evaluateDelta]);
+            return ((HashSet<string>, string[], double, double))result!;
+        }
+
+        [Test]
+        public void DrawCallGate_SharedUseAddsMeshDrawsAndIsRejectedAtZeroLimit()
+        {
+            const string payload = "payload-ab";
+            const double generatedResidentProbability = 0.625;
+            const double expectedGeneratedMeshParts = 2.0;
+            var initialDelta = generatedResidentProbability * expectedGeneratedMeshParts;
+            var result = PruneDrawCallPayloadsForTest(
+                [payload],
+                0,
+                new Dictionary<string, double> { [payload] = 2.5 },
+                selected => selected.Contains(payload) ? initialDelta : 0.0);
+
+            Assert.That(initialDelta, Is.EqualTo(1.25));
+            Assert.That(result.SelectedPayloadIds, Is.Empty);
+            Assert.That(result.DroppedPayloadIds, Is.EqualTo(new[] { payload }));
+            Assert.That(result.InstanceDrawsGivenUp, Is.EqualTo(2.5));
+            Assert.That(result.Delta, Is.EqualTo(0.0));
+        }
+
+        [Test]
+        public void DrawCallGate_FullSourceRetirementKeepsPayloadAtZeroLimit()
+        {
+            const string payload = "payload-ab";
+            var result = PruneDrawCallPayloadsForTest(
+                [payload],
+                0,
+                new Dictionary<string, double> { [payload] = 2.5 },
+                selected => selected.Contains(payload) ? -0.25 : 0.0);
+
+            Assert.That(result.SelectedPayloadIds, Is.EquivalentTo(new[] { payload }));
+            Assert.That(result.DroppedPayloadIds, Is.Empty);
+            Assert.That(result.Delta, Is.EqualTo(-0.25));
+        }
+
+        [Test]
+        public void DrawCallGate_ReevaluatesMarginalDeltaAfterEachRemoval()
+        {
+            var drawsSaved = new Dictionary<string, double>(StringComparer.Ordinal)
+            {
+                ["a"] = 1.0,
+                ["b"] = 1.0,
+                ["c"] = 1.0,
+            };
+            double Delta(IReadOnlySet<string> selected)
+            {
+                if (selected.Count == 3) return 4.0;
+                if (selected.SetEquals(["b", "c"])) return 1.0;
+                if (selected.SetEquals(["a", "b"])) return 3.5;
+                if (selected.SetEquals(["a", "c"])) return 3.0;
+                if (selected.SetEquals(["a"])) return 0.2;
+                if (selected.SetEquals(["b"])) return 0.1;
+                if (selected.SetEquals(["c"])) return 0.8;
+                return 0.0;
+            }
+
+            var result = PruneDrawCallPayloadsForTest(["a", "b", "c"], 0, drawsSaved, Delta);
+
+            Assert.That(result.DroppedPayloadIds, Is.EqualTo(new[] { "a", "c", "b" }));
+            Assert.That(result.SelectedPayloadIds, Is.Empty);
+            Assert.That(result.Delta, Is.EqualTo(0.0));
+        }
+
+        [Test]
+        public void DrawCallGate_InfinityLeavesSelectionUnchanged()
+        {
+            var result = PruneDrawCallPayloadsForTest(
+                ["payload-a", "payload-b"],
+                double.PositiveInfinity,
+                new Dictionary<string, double>
+                {
+                    ["payload-a"] = 1.0,
+                    ["payload-b"] = 2.0,
+                },
+                selected => selected.Count == 2 ? 10.0 : 0.0);
+
+            Assert.That(result.SelectedPayloadIds, Is.EquivalentTo(new[] { "payload-a", "payload-b" }));
+            Assert.That(result.DroppedPayloadIds, Is.Empty);
+            Assert.That(result.Delta, Is.EqualTo(10.0));
+        }
+
+        [Test]
+        public void DrawCallGate_ZeroInstanceDrawSavingsGetsWorstScore()
+        {
+            double Delta(IReadOnlySet<string> selected)
+            {
+                if (selected.Count == 2) return 2.0;
+                if (selected.Contains("a")) return 1.0;
+                return 0.0;
+            }
+
+            var result = PruneDrawCallPayloadsForTest(
+                ["a", "z-zero-savings"],
+                0,
+                new Dictionary<string, double>
+                {
+                    ["a"] = 1.0,
+                    ["z-zero-savings"] = 0.0,
+                },
+                Delta);
+
+            Assert.That(result.DroppedPayloadIds[0], Is.EqualTo("z-zero-savings"));
+        }
+
+        [Test]
+        public void DrawCallGate_WeightedMeshPartsUseTheClampedRigidLod()
+        {
+            var lodDistribution = new Dictionary<int, double>
+            {
+                [0] = 0.25,
+                [1] = 0.25,
+                [2] = 0.25,
+                [3] = 0.25,
+            };
+            var sourceParts = (double)GetStaticMethod("GetExpectedCrossRigidMeshParts")
+                .Invoke(null, [new[] { 4, 2 }, lodDistribution])!;
+            var lodType = GetNestedType("CrossRigidLodAnalysis");
+            var generatedLods = Array.CreateInstance(lodType, 2);
+            generatedLods.SetValue(CreateRecord(
+                "CrossRigidLodAnalysis",
+                new Dictionary<string, object?>
+                {
+                    ["LodIndex"] = 0,
+                    ["OutputDrawsAfterCrossRigidMerge"] = 3,
+                    ["IsScenarioRepresentativeState"] = true,
+                }), 0);
+            generatedLods.SetValue(CreateRecord(
+                "CrossRigidLodAnalysis",
+                new Dictionary<string, object?>
+                {
+                    ["LodIndex"] = 1,
+                    ["OutputDrawsAfterCrossRigidMerge"] = 1,
+                    ["IsScenarioRepresentativeState"] = true,
+                }), 1);
+            var generatedParts = (double)GetStaticMethod("GetExpectedCrossRigidGeneratedMeshParts")
+                .Invoke(null, [generatedLods, lodDistribution])!;
+
+            Assert.That(sourceParts, Is.EqualTo(2.5));
+            Assert.That(generatedParts, Is.EqualTo(1.5));
+        }
+
+        [Test]
+        public void DrawCallGate_OnlyIgnoresResidencySelfRootAndKeepsIndependentRootBlocker()
+        {
+            var indexType = GetNestedType("GameplayMeshDependencyIndex");
+            var constructor = indexType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+            var index = constructor.Invoke([true]);
+            var registerRoot = indexType.GetMethod("RegisterRoot", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+            var rootKind = GetNestedType("GameplayMeshDependencyRootKind");
+            object Kind(string name) => Enum.Parse(rootKind, name);
+
+            const string ws = "variantmeshes/test.wsmodel";
+            const string selectedVmd = "variants/selected.variantmeshdefinition";
+            const string independentVmd = "variants/independent.variantmeshdefinition";
+            registerRoot.Invoke(index, [ws, Kind("ResidencyAsset")]);
+            var isBookkeepingRoot = GetStaticMethod("IsCrossRigidBookkeepingWsSelfRoot");
+            Assert.That((bool)isBookkeepingRoot.Invoke(null, [index, ws, ws])!, Is.True);
+            Assert.That((bool)isBookkeepingRoot.Invoke(null, [index, ws, independentVmd])!, Is.False);
+
+            var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var root in new[] { ws, selectedVmd })
+            {
+                if (!(bool)isBookkeepingRoot.Invoke(null, [index, ws, root])!)
+                    roots.Add(root);
+            }
+
+            Assert.That(
+                Editors.PackOptimizer.Core.CrossRigidRetirementMath.IsUnitRetired(
+                    new[] { ws, selectedVmd },
+                    roots,
+                    root => root.Equals(selectedVmd, StringComparison.OrdinalIgnoreCase)),
+                Is.True,
+                "Filtering the bookkeeping root still lets a fully covered VMD retire the unit.");
+            roots.Add(independentVmd);
+            Assert.That(
+                Editors.PackOptimizer.Core.CrossRigidRetirementMath.IsUnitRetired(
+                    new[] { ws, selectedVmd, independentVmd },
+                    roots,
+                    root => root.Equals(selectedVmd, StringComparison.OrdinalIgnoreCase)),
+                Is.False,
+                "An independent root without occurrence coverage remains a blocker.");
+
+            registerRoot.Invoke(index, [ws, Kind("SourcePackVmd")]);
+            Assert.That((bool)isBookkeepingRoot.Invoke(null, [index, ws, ws])!, Is.False,
+                "A WS self-root that also has an independent root kind is not bookkeeping-only.");
+        }
+
+        private static void AddSyntheticArmyVmdRoot(
+            object model,
+            string rootPath)
+        {
+            var unitsByVmd = Get<IDictionary>(model, "UnitsByVmd");
+            var seed = (IDictionary)unitsByVmd[
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition"]!;
+            var rootUnits = (IDictionary)Activator.CreateInstance(seed.GetType())!;
+            foreach (DictionaryEntry entry in seed)
+            {
+                rootUnits.Add(
+                    entry.Key,
+                    new HashSet<string>(
+                        (IEnumerable<string>)entry.Value!,
+                        StringComparer.OrdinalIgnoreCase));
+            }
+
+            unitsByVmd.Add(rootPath, rootUnits);
+        }
+
+        private static Array CreateRecordArray(
+            string typeName,
+            params object[] values)
+        {
+            var result = Array.CreateInstance(GetNestedType(typeName), values.Length);
+            for (var index = 0; index < values.Length; index++)
+                result.SetValue(values[index], index);
+            return result;
+        }
+
+        private static object CreateExpectedDrawCallGateFixture(
+            bool addIndependentRoot,
+            bool partialJointCoverage = false)
+        {
+            const string payloadId = "payload:draw-call-gate";
+            const string planId = "plan:draw-call-gate";
+            const string wsPath = @"models\partial.wsmodel";
+            const string rigidPath = @"variantmeshes\partial.rigid_model_v2";
+            const string selectedVmd =
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition";
+            const string independentVmd =
+                @"variantmeshes\variantmeshdefinitions\independent.variantmeshdefinition";
+            const string attachment = "attachment:draw-call-gate";
+
+            var model = PackTextureAtlasValueGateTests
+                .CreateSyntheticArmyResidencyModelForFallbackTest();
+            var expectedByUnit = Get<IDictionary>(model, "ExpectedWsModelOccurrencesByUnit");
+            var expectedOccurrences = expectedByUnit["unit:fallback-test"]!;
+            var occurrencesByWsModel = Get<IDictionary>(expectedOccurrences, "ByWsModel");
+            var occurrencesByRole = (IDictionary)occurrencesByWsModel[wsPath]!;
+            foreach (DictionaryEntry entry in occurrencesByRole)
+                occurrencesByRole[entry.Key] = 1.0;
+            AddSyntheticArmyVmdRoot(model, wsPath);
+            if (addIndependentRoot)
+                AddSyntheticArmyVmdRoot(model, independentVmd);
+
+            var index = Activator.CreateInstance(
+                GetNestedType("GameplayMeshDependencyIndex"),
+                AnyInstance,
+                null,
+                [true],
+                null)!;
+            var rootKind = GetNestedType("GameplayMeshDependencyRootKind");
+            object Kind(string name) => Enum.Parse(rootKind, name);
+            InvokeIndex(index, "RegisterRoot", wsPath, Kind("ResidencyAsset"));
+            InvokeIndex(index, "RegisterRoot", selectedVmd, Kind("SourcePackVmd"));
+            InvokeIndex(index, "AddRootReference", wsPath, wsPath);
+            InvokeIndex(index, "AddRootReference", wsPath, selectedVmd);
+            InvokeIndex(index, "AddRootReference", rigidPath, selectedVmd);
+            if (addIndependentRoot)
+            {
+                InvokeIndex(index, "RegisterRoot", independentVmd, Kind("SourcePackVmd"));
+                InvokeIndex(index, "AddRootReference", wsPath, independentVmd);
+            }
+
+            var instance = CreateRecord(
+                "CrossRigidVisualInstance",
+                new Dictionary<string, object?>
+                {
+                    ["WsModelPath"] = wsPath,
+                    ["AttachmentIdentity"] = attachment,
+                    ["DefiningVmdPath"] = selectedVmd,
+                    ["ModelXmlPath"] = wsPath,
+                });
+            var instances = CreateRecordArray("CrossRigidVisualInstance", instance);
+            var occurrenceSet = CreateRecord(
+                "CrossRigidRewriteOccurrenceSet",
+                new Dictionary<string, object?>
+                {
+                    ["Probability"] = 1.0,
+                    ["SourceInstances"] = instances,
+                });
+            var occurrenceSets = CreateRecordArray(
+                "CrossRigidRewriteOccurrenceSet",
+                occurrenceSet);
+            var sourceGeometry = CreateRecord(
+                "CrossRigidSourceGeometryComponent",
+                new Dictionary<string, object?>
+                {
+                    ["WsModelPath"] = wsPath,
+                    ["RigidPath"] = rigidPath,
+                    ["VertexCount"] = 1L,
+                    ["GeometryBytes"] = 1L,
+                    ["MeshPartCounts"] = new[] { 1 },
+                });
+            var sourceGeometryComponents = CreateRecordArray(
+                "CrossRigidSourceGeometryComponent",
+                sourceGeometry);
+            var lod = CreateRecord(
+                "CrossRigidLodAnalysis",
+                new Dictionary<string, object?>
+                {
+                    ["LodIndex"] = 0,
+                    ["ScenarioLodIndex"] = 0,
+                    ["IsScenarioRepresentativeState"] = true,
+                    ["OutputDrawsAfterCrossRigidMerge"] = 1,
+                    ["LodProbability"] = 1.0,
+                });
+            var lods = CreateRecordArray("CrossRigidLodAnalysis", lod);
+            var plan = CreateRecord(
+                "CrossRigidMergeAnalysisEntry",
+                new Dictionary<string, object?>
+                {
+                    ["RewritePlanId"] = planId,
+                    ["GeneratedPayloadId"] = payloadId,
+                    ["VmdPath"] = selectedVmd,
+                    ["AggregatedConfigurationProbability"] = 1.0,
+                    ["ContributingConfigurationCount"] = 1,
+                    ["AttachmentIdentity"] = attachment,
+                    ["SourceInstances"] = instances,
+                    ["RewriteOccurrenceSets"] = occurrenceSets,
+                    ["SourceGeometry"] = sourceGeometryComponents,
+                    ["RigidPaths"] = new[] { rigidPath },
+                    ["Lods"] = lods,
+                    ["ExpectedArmyDrawCallsEliminated"] = 1.0,
+                });
+
+            var state = CreateBareBatchState();
+            SetStateProperty(state, "ArmyResidencyModel", model);
+            SetStateProperty(state, "GameplayMeshDependencyIndex", index);
+            AddToList(state, "CrossRigidMergeAnalysisEntries", plan);
+            AddToList(
+                state,
+                "CrossRigidGeneratedPayloadAnalysisEntries",
+                CreateRecord(
+                    "CrossRigidGeneratedPayloadAnalysisEntry",
+                    new Dictionary<string, object?>
+                    {
+                        ["GeneratedPayloadId"] = payloadId,
+                        ["RewritePlanCount"] = 1,
+                        ["VmdCount"] = 1,
+                        ["SourceWsModelPaths"] = new[] { wsPath },
+                        ["RigidPaths"] = new[] { rigidPath },
+                        ["Lods"] = lods,
+                        ["GeneratedVertexCount"] = 1L,
+                        ["GeneratedGeometryBytes"] = 1L,
+                        ["ExpectedBattleResidentProbability"] = 1.0,
+                    }));
+            AddToList(
+                state,
+                "CrossRigidPayloadSelectionEntries",
+                CreateRecord(
+                    "CrossRigidPayloadSelectionEntry",
+                    new Dictionary<string, object?>
+                    {
+                        ["GeneratedPayloadId"] = payloadId,
+                        ["Decision"] = Enum.Parse(
+                            GetNestedType("CrossRigidPayloadSelectionDecision"),
+                            "Accept"),
+                        ["ExpectedArmyDrawCallsEliminated"] = 1.0,
+                        ["MarginalExpectedArmyDrawCallsEliminated"] = 1.0,
+                        ["MaxRawDrawsSavedPerState"] = 1,
+                        ["RewritePlanCount"] = 1,
+                        ["VmdCount"] = 1,
+                        ["GeneratedGeometryBytes"] = 1L,
+                        ["SelectionRank"] = 1,
+                    }));
+            AddToSet(state, "CrossRigidSelectedPayloadIds", payloadId);
+
+            var selectedKey = (string)GetStaticMethod(
+                    "BuildCrossRigidSelectedRewriteOccurrenceKey")
+                .Invoke(null, [plan, occurrenceSet])!;
+            AddToSet(state, "CrossRigidSelectedRewriteOccurrenceKeys", selectedKey);
+            if (partialJointCoverage)
+            {
+                Get<Dictionary<string, HashSet<string>>>(
+                    state,
+                    "CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey")[selectedKey] =
+                    new HashSet<string>(StringComparer.Ordinal) { "partial-combination" };
+                Get<Dictionary<string, double>>(
+                    state,
+                    "CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey")[selectedKey] = 0.5;
+            }
+            var occurrenceKey = CreateRecord(
+                "CrossRigidWsModelOccurrenceKey",
+                new Dictionary<string, object?>
+                {
+                    ["VmdPath"] = selectedVmd,
+                    ["AttachmentIdentity"] = attachment,
+                    ["WsModelPath"] = wsPath,
+                });
+            Get<IDictionary>(state, "CrossRigidWsModelOccurrenceProbabilities")
+                .Add(occurrenceKey, 1.0);
+            return state;
+        }
+
+        private static object RunExpectedDrawCallGate(
+            object state,
+            double limit)
+        {
+            var previous = CrossRigidBudgetSettings.Current;
+            try
+            {
+                CrossRigidBudgetSettings.Current = previous with
+                {
+                    MaxExpectedDrawCallIncrease = limit,
+                };
+                GetStaticMethod("ApplyCrossRigidExpectedDrawCallIncreaseGate")
+                    .Invoke(null, [state]);
+                return Get<object>(state, "CrossRigidExpectedDrawCallGateReport");
+            }
+            finally
+            {
+                CrossRigidBudgetSettings.Current = previous;
+            }
+        }
+
+        [Test]
+        public void DrawCallGate_FullyRetiredSourceWithBookkeepingWsRoot_KeepsPayload()
+        {
+            var state = CreateExpectedDrawCallGateFixture(addIndependentRoot: false);
+
+            var report = RunExpectedDrawCallGate(state, limit: 0);
+            var evaluation = Get<object>(report, "Evaluation");
+            var source = ((IEnumerable)Get<object>(evaluation, "SourceRigids"))
+                .Cast<object>()
+                .Single();
+
+            Assert.That(
+                Get<HashSet<string>>(state, "CrossRigidSelectedPayloadIds"),
+                Is.EquivalentTo(new[] { "payload:draw-call-gate" }));
+            Assert.That(Get<object>(GetSelectionEntry(state, "payload:draw-call-gate"), "Decision").ToString(),
+                Is.EqualTo("Accept"));
+            Assert.That(Get<double>(source, "ProbabilityBefore"), Is.EqualTo(1).Within(1e-9));
+            Assert.That(Get<double>(source, "ProbabilityAfter"), Is.EqualTo(0).Within(1e-9));
+            Assert.That(Get<double>(evaluation, "Before"), Is.EqualTo(1).Within(1e-9));
+            Assert.That(Get<double>(evaluation, "After"), Is.EqualTo(1).Within(1e-9));
+            Assert.That(Get<double>(evaluation, "Delta"), Is.EqualTo(0).Within(1e-9));
+            Assert.That(((IEnumerable)Get<object>(report, "DroppedPayloads")).Cast<object>(), Is.Empty);
+        }
+
+        [Test]
+        public void DrawCallGate_IndependentVmdRootBlocksRetirementAndPayloadIsRejectedAtZero()
+        {
+            var state = CreateExpectedDrawCallGateFixture(addIndependentRoot: true);
+
+            var report = RunExpectedDrawCallGate(state, limit: 0);
+            var evaluation = Get<object>(report, "Evaluation");
+            var source = ((IEnumerable)Get<object>(evaluation, "SourceRigids"))
+                .Cast<object>()
+                .Single();
+            var selection = GetSelectionEntry(state, "payload:draw-call-gate");
+
+            Assert.That(Get<HashSet<string>>(state, "CrossRigidSelectedPayloadIds"), Is.Empty);
+            Assert.That(Get<object>(selection, "Decision").ToString(), Is.EqualTo("RejectedDrawCallIncrease"));
+            Assert.That(Get<double>(source, "ProbabilityBefore"), Is.EqualTo(1).Within(1e-9));
+            Assert.That(Get<double>(source, "ProbabilityAfter"), Is.EqualTo(1).Within(1e-9));
+            Assert.That(Get<double>(evaluation, "Delta"), Is.EqualTo(0).Within(1e-9));
+            var dropped = ((IEnumerable)Get<object>(report, "DroppedPayloads"))
+                .Cast<object>()
+                .Single();
+            Assert.That(Get<string>(dropped, "GeneratedPayloadId"), Is.EqualTo("payload:draw-call-gate"));
+            Assert.That(Get<double>(report, "InstanceDrawsGivenUp"), Is.EqualTo(1).Within(1e-9));
+            Assert.That(
+                Get<HashSet<string>>(state, "CrossRigidSelectedRewriteOccurrenceKeys"),
+                Is.Empty);
+        }
+
+        [Test]
+        public void DrawCallGate_PartialJointCombinationCoverageCannotRetireSource()
+        {
+            var state = CreateExpectedDrawCallGateFixture(
+                addIndependentRoot: false,
+                partialJointCoverage: true);
+
+            var report = RunExpectedDrawCallGate(state, limit: 0);
+            var evaluation = Get<object>(report, "Evaluation");
+            var source = ((IEnumerable)Get<object>(evaluation, "SourceRigids"))
+                .Cast<object>()
+                .Single();
+
+            Assert.That(Get<HashSet<string>>(state, "CrossRigidSelectedPayloadIds"), Is.Empty);
+            Assert.That(
+                Get<object>(GetSelectionEntry(state, "payload:draw-call-gate"), "Decision").ToString(),
+                Is.EqualTo("RejectedDrawCallIncrease"));
+            Assert.That(Get<double>(source, "ProbabilityAfter"), Is.EqualTo(1).Within(1e-9),
+                "Partial joint-state coverage cannot retire the source rigid for its unit.");
+            Assert.That(((IEnumerable)Get<object>(report, "DroppedPayloads")).Cast<object>().ToArray(), Has.Length.EqualTo(1));
+        }
+
+        [Test]
+        public void DrawCallGate_JointCombinationCoverageUsesSelectedProbabilityMass()
+        {
+            const string occurrenceKey = "rewrite-occurrence";
+            var state = CreateBareBatchState();
+            Get<Dictionary<string, HashSet<string>>>(
+                state,
+                "CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey")[occurrenceKey] =
+                new HashSet<string>(StringComparer.Ordinal) { "small", "large" };
+            object ConflictOccurrence(string combination, double expectedDraws)
+                => CreateRecord(
+                    "CrossRigidRewriteConflictOccurrence",
+                    new Dictionary<string, object?>
+                    {
+                        ["SelectionKey"] = combination,
+                        ["RewriteOccurrenceKey"] = occurrenceKey,
+                        ["JointCombinationKey"] = combination,
+                        ["ExpectedArmyDrawCallsEliminated"] = expectedDraws,
+                        ["RewriteConflictKeys"] = new HashSet<string>(StringComparer.Ordinal),
+                        ["JointContextKeyByParentLocation"] = new Dictionary<string, string>(StringComparer.Ordinal),
+                    });
+            var profile = CreateRecord(
+                "CrossRigidPayloadRewriteConflictProfile",
+                new Dictionary<string, object?>
+                {
+                    ["Occurrences"] = CreateRecordArray(
+                        "CrossRigidRewriteConflictOccurrence",
+                        ConflictOccurrence("small", 0.1),
+                        ConflictOccurrence("large", 0.3)),
+                });
+
+            GetStaticMethod("UpdateCrossRigidSelectedJointCombinationCoverage")
+                .Invoke(null, [state, profile]);
+
+            Assert.That(
+                Get<Dictionary<string, double>>(
+                    state,
+                    "CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey")[occurrenceKey],
+                Is.EqualTo(1).Within(1e-9));
+            Get<Dictionary<string, HashSet<string>>>(
+                state,
+                "CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey")[occurrenceKey]
+                .Remove("large");
+            GetStaticMethod("UpdateCrossRigidSelectedJointCombinationCoverage")
+                .Invoke(null, [state, profile]);
+            Assert.That(
+                Get<Dictionary<string, double>>(
+                    state,
+                    "CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey")[occurrenceKey],
+                Is.EqualTo(0.25).Within(1e-9));
         }
 
         [Test]

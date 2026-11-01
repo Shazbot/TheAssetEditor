@@ -99,6 +99,9 @@ namespace Editors.PackOptimizer.Core
             public required Dictionary<CrossRigidWsModelOccurrenceKey, List<(CrossRigidMergeAnalysisEntry Plan, CrossRigidRewriteOccurrenceSet Set, bool Selected)>> Coverers { get; init; }
             public required Dictionary<string, CrossRigidPayloadSelectionEntry> DecisionByPayload { get; init; }
             public required Dictionary<string, List<CrossRigidMergeAnalysisEntry>> PlansByPayload { get; init; }
+            public required Dictionary<string, List<(CrossRigidWsModelOccurrenceKey Key, double Coverage)>> DrawCallCoverageByPayload { get; init; }
+            public Dictionary<string, HashSet<string>> DrawCallRetirementRootsByRigid { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> DrawCallRelevantUnitsByRigid { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, double> ProbabilityBefore { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, double> ProbabilityAfterCache { get; } = new(StringComparer.Ordinal);
             public int ModelCalls;
@@ -298,12 +301,48 @@ namespace Editors.PackOptimizer.Core
             var coverers = new Dictionary<
                 CrossRigidWsModelOccurrenceKey,
                 List<(CrossRigidMergeAnalysisEntry, CrossRigidRewriteOccurrenceSet, bool)>>();
+            var drawCallCoverageByPayload = new Dictionary<
+                string,
+                List<(CrossRigidWsModelOccurrenceKey Key, double Coverage)>>(StringComparer.Ordinal);
             foreach (var plan in state.CrossRigidMergeAnalysisEntries)
             {
                 foreach (var set in plan.RewriteOccurrenceSets)
                 {
+                    var rewriteOccurrenceKey = BuildCrossRigidSelectedRewriteOccurrenceKey(plan, set);
                     var isSelected = state.CrossRigidSelectedRewriteOccurrenceKeys.Contains(
-                        BuildCrossRigidSelectedRewriteOccurrenceKey(plan, set));
+                        rewriteOccurrenceKey);
+                    if (isSelected)
+                    {
+                        var jointCoverageFraction = state
+                            .CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey
+                            .GetValueOrDefault(rewriteOccurrenceKey,
+                                state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey
+                                    .ContainsKey(rewriteOccurrenceKey)
+                                    ? 0
+                                    : 1);
+                        if (jointCoverageFraction > 0)
+                        {
+                            if (!drawCallCoverageByPayload.TryGetValue(
+                                    plan.GeneratedPayloadId,
+                                    out var payloadCoverage))
+                            {
+                                payloadCoverage = [];
+                                drawCallCoverageByPayload[plan.GeneratedPayloadId] = payloadCoverage;
+                            }
+
+                            var coverage = set.Probability * jointCoverageFraction;
+                            foreach (var instance in set.SourceInstances.Distinct())
+                            {
+                                payloadCoverage.Add((
+                                    new CrossRigidWsModelOccurrenceKey(
+                                        plan.VmdPath,
+                                        instance.AttachmentIdentity,
+                                        instance.WsModelPath),
+                                    coverage));
+                            }
+                        }
+                    }
+
                     foreach (var instance in set.SourceInstances.Distinct())
                     {
                         var key = new CrossRigidWsModelOccurrenceKey(
@@ -335,7 +374,7 @@ namespace Editors.PackOptimizer.Core
                 .GroupBy(plan => plan.GeneratedPayloadId, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
 
-            return new RetirementContext
+            var context = new RetirementContext
             {
                 State = state,
                 Index = index,
@@ -350,13 +389,17 @@ namespace Editors.PackOptimizer.Core
                 Coverers = coverers,
                 DecisionByPayload = decisions,
                 PlansByPayload = plansByPayload,
+                DrawCallCoverageByPayload = drawCallCoverageByPayload,
             };
+            PrepareCrossRigidDrawCallRetirementCache(context);
+            return context;
         }
 
         private static RetirementCoverage BuildRetirementCoverage(
             BatchState state,
             string name,
-            bool selectedOnly)
+            bool selectedOnly,
+            IReadOnlySet<string>? selectedPayloadIds = null)
         {
             var coverage = new Dictionary<CrossRigidWsModelOccurrenceKey, double>();
             var vmdsWithPlans = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -364,12 +407,30 @@ namespace Editors.PackOptimizer.Core
             {
                 foreach (var set in plan.RewriteOccurrenceSets)
                 {
+                    var occurrenceKey =
+                        BuildCrossRigidSelectedRewriteOccurrenceKey(plan, set);
                     if (selectedOnly &&
-                        !state.CrossRigidSelectedRewriteOccurrenceKeys.Contains(
-                            BuildCrossRigidSelectedRewriteOccurrenceKey(plan, set)))
+                        (!state.CrossRigidSelectedRewriteOccurrenceKeys.Contains(
+                             occurrenceKey) ||
+                         selectedPayloadIds != null &&
+                         !selectedPayloadIds.Contains(plan.GeneratedPayloadId)))
                     {
                         continue;
                     }
+
+                    var selectedJointCoverageFraction =
+                        selectedOnly && selectedPayloadIds != null
+                            ? state
+                                .CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey
+                                .GetValueOrDefault(occurrenceKey,
+                                    state
+                                        .CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey
+                                        .ContainsKey(occurrenceKey)
+                                        ? 0
+                                        : 1)
+                            : 1;
+                    if (selectedJointCoverageFraction <= 0)
+                        continue;
 
                     vmdsWithPlans.Add(plan.VmdPath);
                     foreach (var instance in set.SourceInstances.Distinct())
@@ -378,12 +439,58 @@ namespace Editors.PackOptimizer.Core
                             plan.VmdPath,
                             instance.AttachmentIdentity,
                             instance.WsModelPath);
-                        coverage[key] = Math.Min(1.0, coverage.GetValueOrDefault(key) + set.Probability);
+                        coverage[key] = Math.Min(
+                            1.0,
+                            coverage.GetValueOrDefault(key) +
+                            set.Probability * selectedJointCoverageFraction);
                     }
                 }
             }
 
             return new RetirementCoverage { Name = name, Coverage = coverage, VmdsWithPlans = vmdsWithPlans };
+        }
+
+        private static void PrepareCrossRigidDrawCallRetirementCache(RetirementContext context)
+        {
+            var model = context.State.ArmyResidencyModel;
+            var rootsByWs = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ws in context.WsOfRigid.Values
+                         .SelectMany(wsModels => wsModels)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (context.Index != null)
+                {
+                    foreach (var root in context.Index.GetRootsForAsset(ws))
+                    {
+                        if (!IsCrossRigidBookkeepingWsSelfRoot(context.Index, ws, root))
+                            roots.Add(root);
+                    }
+                }
+                rootsByWs[ws] = roots;
+            }
+
+            foreach (var rigid in context.RigidBytes.Keys)
+            {
+                if (!context.VmdsOfRigid.TryGetValue(rigid, out var analyzedVmds) ||
+                    !context.WsOfRigid.TryGetValue(rigid, out var wsModels))
+                {
+                    continue;
+                }
+
+                var roots = new HashSet<string>(analyzedVmds, StringComparer.OrdinalIgnoreCase);
+                var relevantUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var ws in wsModels)
+                {
+                    if (rootsByWs.TryGetValue(ws, out var wsRoots))
+                        roots.UnionWith(wsRoots);
+                    if (model != null && model.UnitIdsByAssetPath.TryGetValue(ws, out var units))
+                        relevantUnits.UnionWith(units);
+                }
+
+                context.DrawCallRetirementRootsByRigid[rigid] = roots;
+                context.DrawCallRelevantUnitsByRigid[rigid] = relevantUnits;
+            }
         }
 
         // ---------------------------------------------------------------- scope evaluation
@@ -456,7 +563,9 @@ namespace Editors.PackOptimizer.Core
 
         private static RetirementScopeResult EvaluateRetirementScope(
             RetirementContext context,
-            RetirementCoverage scope)
+            RetirementCoverage scope,
+            bool ignoreBookkeepingWsSelfRoots = false,
+            bool failClosedOnExternalConsumers = false)
         {
             var result = new RetirementScopeResult();
             foreach (var (vmd, occurrences) in context.OccByVmd)
@@ -509,7 +618,18 @@ namespace Editors.PackOptimizer.Core
             {
                 foreach (var rigid in context.RigidBytes.Keys)
                 {
-                    var retiredUnits = ComputeRetiredUnits(context, scope, result, rigid);
+                    var retiredUnits = ComputeRetiredUnits(
+                        context,
+                        scope,
+                        result,
+                        rigid,
+                        ignoreBookkeepingWsSelfRoots);
+                    if (failClosedOnExternalConsumers &&
+                        HasCrossRigidDrawCallRetirementBlocker(context, rigid))
+                    {
+                        retiredUnits.Clear();
+                    }
+
                     if (retiredUnits.Count == 0)
                         continue;
 
@@ -532,7 +652,8 @@ namespace Editors.PackOptimizer.Core
             RetirementContext context,
             RetirementCoverage scope,
             RetirementScopeResult result,
-            string rigid)
+            string rigid,
+            bool ignoreBookkeepingWsSelfRoots = false)
         {
             var retired = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var model = context.State.ArmyResidencyModel;
@@ -547,18 +668,41 @@ namespace Editors.PackOptimizer.Core
             if (!analyzedVmds.Any(vmd => GetRv(context, scope, result, rigid, vmd).Uncovered == 0))
                 return retired;
 
-            var roots = new HashSet<string>(analyzedVmds, StringComparer.OrdinalIgnoreCase);
-            if (context.Index != null)
+            HashSet<string> roots;
+            HashSet<string> relevantUnits;
+            if (ignoreBookkeepingWsSelfRoots &&
+                context.DrawCallRetirementRootsByRigid.TryGetValue(rigid, out var cachedRoots) &&
+                context.DrawCallRelevantUnitsByRigid.TryGetValue(rigid, out var cachedUnits))
             {
-                foreach (var ws in wsModels)
-                    roots.UnionWith(context.Index.GetRootsForAsset(ws));
+                roots = cachedRoots;
+                relevantUnits = cachedUnits;
             }
-
-            var relevantUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var ws in wsModels)
+            else
             {
-                if (model.UnitIdsByAssetPath.TryGetValue(ws, out var units))
-                    relevantUnits.UnionWith(units);
+                roots = new HashSet<string>(analyzedVmds, StringComparer.OrdinalIgnoreCase);
+                if (context.Index != null)
+                {
+                    foreach (var ws in wsModels)
+                    {
+                        foreach (var root in context.Index.GetRootsForAsset(ws))
+                        {
+                            if (ignoreBookkeepingWsSelfRoots &&
+                                IsCrossRigidBookkeepingWsSelfRoot(context.Index, ws, root))
+                            {
+                                continue;
+                            }
+
+                            roots.Add(root);
+                        }
+                    }
+                }
+
+                relevantUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var ws in wsModels)
+                {
+                    if (model.UnitIdsByAssetPath.TryGetValue(ws, out var units))
+                        relevantUnits.UnionWith(units);
+                }
             }
 
             foreach (var unit in relevantUnits)
@@ -577,6 +721,23 @@ namespace Editors.PackOptimizer.Core
             }
 
             return retired;
+        }
+
+        private static bool IsCrossRigidBookkeepingWsSelfRoot(
+            GameplayMeshDependencyIndex index,
+            string wsModelPath,
+            string rootPath)
+        {
+            if (!Normalize(wsModelPath).Equals(
+                    Normalize(rootPath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var rootKinds = index.GetRootKinds(rootPath);
+            return rootKinds.Count == 1 &&
+                   rootKinds.Contains(GameplayMeshDependencyRootKind.ResidencyAsset);
         }
 
         private static double GetRigidProbabilityBefore(RetirementContext context, string rigid)

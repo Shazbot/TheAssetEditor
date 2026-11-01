@@ -34,6 +34,7 @@ namespace Editors.PackOptimizer.Core
             state.CrossRigidSelectedPayloadIds.Clear();
             state.CrossRigidSelectedRewriteOccurrenceKeys.Clear();
             state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey.Clear();
+            state.CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey.Clear();
             state.CrossRigidRewriteConflictReasonCounts.Clear();
             state.CrossRigidRewriteConflictExpectedDraws.Clear();
             state.CrossRigidRewriteConflictExamples.Clear();
@@ -561,6 +562,10 @@ namespace Editors.PackOptimizer.Core
                         }
                     }
 
+                    UpdateCrossRigidSelectedJointCombinationCoverage(
+                        state,
+                        conflictProfile);
+
                     state.CrossRigidSelectedPayloadIds.Add(
                         candidate.GeneratedPayloadId);
                     state.CrossRigidPayloadSelectionEntries.Add(
@@ -802,6 +807,10 @@ namespace Editors.PackOptimizer.Core
 
                     combinationKeys.Add(occurrence.JointCombinationKey);
                 }
+
+                UpdateCrossRigidSelectedJointCombinationCoverage(
+                    state,
+                    fallbackProfile);
 
                 acceptedExpectedDraws = projectedDraws;
                 acceptedExpectedResidentGeometryBytes +=
@@ -1949,6 +1958,46 @@ namespace Editors.PackOptimizer.Core
             }
 
             return selected.ToArray();
+        }
+
+        private static void UpdateCrossRigidSelectedJointCombinationCoverage(
+            BatchState state,
+            CrossRigidPayloadRewriteConflictProfile profile)
+        {
+            foreach (var group in profile.Occurrences
+                         .Where(occurrence =>
+                             !string.IsNullOrWhiteSpace(
+                                 occurrence.JointCombinationKey))
+                         .GroupBy(
+                             occurrence => occurrence.RewriteOccurrenceKey,
+                             StringComparer.Ordinal))
+            {
+                if (!state
+                        .CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey
+                        .TryGetValue(group.Key, out var selectedCombinationKeys))
+                {
+                    continue;
+                }
+
+                var totalExpectedDraws = group.Sum(occurrence =>
+                    occurrence.ExpectedArmyDrawCallsEliminated);
+                var selectedExpectedDraws = group
+                    .Where(occurrence =>
+                        occurrence.JointCombinationKey != null &&
+                        selectedCombinationKeys.Contains(
+                            occurrence.JointCombinationKey))
+                    .Sum(occurrence =>
+                        occurrence.ExpectedArmyDrawCallsEliminated);
+                state
+                    .CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey[
+                        group.Key] = totalExpectedDraws <=
+                            AtlasValueGateExpectedDrawEpsilon
+                        ? 0
+                        : Math.Clamp(
+                            selectedExpectedDraws / totalExpectedDraws,
+                            0,
+                            1);
+            }
         }
 
         private static bool HasCrossRigidRewriteConflict(

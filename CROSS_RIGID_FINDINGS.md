@@ -1026,3 +1026,27 @@ pass; every selected rigid's LODs and parts run all five native passes. Four
 targeted cases passed, including four-LOD filtering and overlap processing.
 The fix preserves commit 5975da7e5's external rigid-copy work; full pack
 benchmarks were not repeated. See [Meshoptimizer findings](MESHOPT_FINDINGS.md).
+
+
+## 2026-11-01: Cross-rigid distinct-mesh draw-call gate (OutputVersion 44)
+
+Implemented the zero-default expected draw-call increase gate. The older cross-rigid benefit metric counts part instances; this gate counts distinct resident mesh files, weighted by scenario LOD and emitted parts per LOD. It credits source residency reductions only when selected rewrites fully retire the source for a unit. Bookkeeping-only WSModel self-roots are ignored; independent uses, direct rigid consumers, and incomplete roots block retirement credit. Partial joint selections contribute only their selected probability. Removal uses marginal draw-call cost per instance saving and recalculates retirement after each removal; it never admits replacement payloads.
+
+Bench inputs: workshop TEB `2927296206\!ak_teb3.pack` and Albion `2873961274\ovn_albion.pack`; no consumer packs; normal bench defaults (atlases off, cross-rigid/repack/compaction/editor LODs on). Fresh pre-change baseline is commit `ccfd094ea97e403a293b958252a98add823c0773`, OutputVersion 43. Existing v35 references are historical: fresh Albion selects 13 payloads and saves 6.790 instances rather than 6.5.
+
+| Pack / limit | Expected distinct draws before | After | Delta | Payloads kept | Instance saving kept | Output pack bytes |
+|---|---:|---:|---:|---:|---:|---:|
+| TEB / inf | 53.285 | 82.844 | +29.559 | 107 | 46.392 | 596,612,640 |
+| TEB / 0 | 53.285 | 53.285 | 0 | 0 | 0 | 533,153,267 |
+| Albion / inf | 4.911 | 8.232 | +3.321 | 13 | 6.790 | 672,214,213 |
+| Albion / 0 | 4.911 | 4.885 | -0.026 | 4 | 0.705 | 662,875,878 |
+
+Before/after totals cover source meshes participating in analyzed cross-rigid candidates and generated payloads; unaffected meshes cancel from the delta. Default TEB drops 107 payloads, giving up 46.392 instance savings and saving 63,459,373 pack bytes versus infinity. Default Albion drops 9 payloads, giving up 6.085 instance savings, retaining about 10.4%, and saving 9,338,335 pack bytes. No source assets are physically retired by this change.
+
+Infinity matches every sorted asset path/hash in the fresh baseline: TEB 6,746 files, Albion 4,816 files. Report text and output version change. The final zero-limit TEB run took 147.9 s processing / 150.8 s total versus baseline 140.7 / 144.8 s; Albion 85.9 / 89.3 s versus baseline 86.2 / 90.0 s. Timings are single observations, not a controlled performance comparison. An initial uncached marginal evaluator was too slow and was stopped; fixed payload contributions, source part counts, coverage contributions and root/unit sets are now prepared once per gate. Retirement still recalculates for every removal trial.
+
+Verification: 744 focused Debug tests passed (cross-rigid, budget settings, retirement math), including golden v44, actual evaluator fixtures, partial joint coverage, independent-root blocking, infinity, and interacting removals. Release bench build passed with 0 errors (existing warnings). `--xr-max-drawcall-increase <n|inf>` controls the gate; finite limits must be nonnegative. The optional limit sweep was not run. The WHMM host was not rebuilt or shipped.
+
+Artifacts: `K:\projects\assedfork-bench\cross-rigid-drawcall-gate-20261101`. Accepted runs are `teb-final-inf`, `teb-verified-0`, `albion-verified-inf`, `albion-verified-0`; `teb-before` and `albion-before` are the fresh baseline. Earlier stopped zero runs are incomplete and are not evidence.
+
+WHMM Windows CLI `pack validate --baseline --with-vanilla --format json` completed successfully for both defaults and infinity outputs: valid=true, regressed=false, zero added diagnostics. Existing incomplete coverage remains (`validationComplete=false`): two unsupported RMV2 parts per pack, invalid loader references/scan limit, unresolved embedded textures, and an unsupported table schema on Albion. Default TEB resolves 2,291 missing-texture diagnostics by omitting rejected generated rigids; Albion resolves 312. This establishes no validation regression within supported coverage, not a complete proof for unsupported assets. Validation JSON files are saved beside `results.md`; the TEB infinity report applies to byte-identical infinity runs.

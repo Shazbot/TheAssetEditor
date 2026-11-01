@@ -13,8 +13,22 @@ namespace Editors.PackOptimizer.Core
         long GeneratedGeometryGrowthBytes = 256L * 1024 * 1024,
         double MinimumSingleVmdExpectedArmyDraw = 0.02,
         double PerPayloadCostCeilingMultiplier = 1.0,
-        int MaxJointStateCombinations = 4096)
+        int MaxJointStateCombinations = 4096,
+        double MaxExpectedDrawCallIncrease = 0)
     {
+        public void Validate()
+        {
+            if (double.IsNaN(MaxExpectedDrawCallIncrease) ||
+                double.IsNegativeInfinity(MaxExpectedDrawCallIncrease) ||
+                MaxExpectedDrawCallIncrease < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxExpectedDrawCallIncrease),
+                    MaxExpectedDrawCallIncrease,
+                    "The cross-rigid expected draw-call increase limit must be nonnegative, finite, or positive infinity.");
+            }
+        }
+
         public static CrossRigidBudgetSettings Default { get; } = new();
 
         public static CrossRigidBudgetSettings Current { get; set; } = Default;
