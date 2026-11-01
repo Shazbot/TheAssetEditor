@@ -12,7 +12,11 @@ namespace Test.PackOptimizer.Core
             string[] Attachments,
             int GeneratedDraws,
             int DrawsSaved,
-            long GeometryBytes = 100_000);
+            long GeometryBytes = 100_000,
+            string? WsModelPath = null,
+            string? RigidPath = null,
+            string? ModelXmlPath = null,
+            IReadOnlyDictionary<string, string>? ModelXmlPathByAttachment = null);
 
         private const string DrawCallSearchWsPath =
             @"models\partial.wsmodel";
@@ -20,6 +24,14 @@ namespace Test.PackOptimizer.Core
             @"variantmeshes\draw_call_search.rigid_model_v2";
         private const string DrawCallSearchFallbackVmd =
             @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition";
+
+        private static string GetDrawCallSearchWsPath(
+            DrawCallSearchCandidate candidate)
+            => candidate.WsModelPath ?? DrawCallSearchWsPath;
+
+        private static string GetDrawCallSearchRigidPath(
+            DrawCallSearchCandidate candidate)
+            => candidate.RigidPath ?? DrawCallSearchRigidPath;
 
         private static object CreateDrawCallPortfolioSearchState(
             IReadOnlyList<DrawCallSearchCandidate> candidates,
@@ -35,10 +47,39 @@ namespace Test.PackOptimizer.Core
             var occurrencesByWsModel = Get<IDictionary>(
                 expectedOccurrences,
                 "ByWsModel");
-            var occurrencesByRole =
+            var defaultOccurrencesByRole =
                 (IDictionary)occurrencesByWsModel[DrawCallSearchWsPath]!;
-            foreach (DictionaryEntry entry in occurrencesByRole)
-                occurrencesByRole[entry.Key] = 1.0;
+            var candidateWsPaths = candidates
+                .Select(GetDrawCallSearchWsPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var unitIdsByAssetPath = Get<IDictionary>(model, "UnitIdsByAssetPath");
+            var defaultUnitIds = (IEnumerable<string>)unitIdsByAssetPath[
+                DrawCallSearchWsPath]!;
+            foreach (var wsPath in candidateWsPaths)
+            {
+                if (!occurrencesByWsModel.Contains(wsPath))
+                {
+                    var copiedOccurrencesByRole = (IDictionary)Activator.CreateInstance(
+                        defaultOccurrencesByRole.GetType())!;
+                    foreach (DictionaryEntry entry in defaultOccurrencesByRole)
+                        copiedOccurrencesByRole.Add(entry.Key, entry.Value);
+                    occurrencesByWsModel.Add(wsPath, copiedOccurrencesByRole);
+                }
+
+                var occurrencesByRole = (IDictionary)occurrencesByWsModel[wsPath]!;
+                foreach (DictionaryEntry entry in occurrencesByRole)
+                    occurrencesByRole[entry.Key] = 1.0;
+
+                if (!unitIdsByAssetPath.Contains(wsPath))
+                {
+                    unitIdsByAssetPath.Add(
+                        wsPath,
+                        new HashSet<string>(
+                            defaultUnitIds,
+                            StringComparer.OrdinalIgnoreCase));
+                }
+            }
 
             var candidateVmds = candidates
                 .Select(candidate => candidate.VmdPath)
@@ -62,16 +103,11 @@ namespace Test.PackOptimizer.Core
                 null)!;
             var rootKind = GetNestedType("GameplayMeshDependencyRootKind");
             object Kind(string name) => Enum.Parse(rootKind, name);
-            InvokeIndex(
-                index,
-                "RegisterRoot",
-                DrawCallSearchWsPath,
-                Kind("ResidencyAsset"));
-            InvokeIndex(
-                index,
-                "AddRootReference",
-                DrawCallSearchWsPath,
-                DrawCallSearchWsPath);
+            foreach (var wsPath in candidateWsPaths)
+            {
+                InvokeIndex(index, "RegisterRoot", wsPath, Kind("ResidencyAsset"));
+                InvokeIndex(index, "AddRootReference", wsPath, wsPath);
+            }
 
             foreach (var vmd in candidateVmds)
             {
@@ -80,8 +116,17 @@ namespace Test.PackOptimizer.Core
                     "RegisterRoot",
                     vmd,
                     Kind("SourcePackVmd"));
-                InvokeIndex(index, "AddRootReference", DrawCallSearchWsPath, vmd);
-                InvokeIndex(index, "AddRootReference", DrawCallSearchRigidPath, vmd);
+            }
+
+            foreach (var (wsPath, rigidPath, vmdPath) in candidates
+                         .Select(candidate => (
+                             WsPath: GetDrawCallSearchWsPath(candidate),
+                             RigidPath: GetDrawCallSearchRigidPath(candidate),
+                             VmdPath: candidate.VmdPath))
+                         .Distinct())
+            {
+                InvokeIndex(index, "AddRootReference", wsPath, vmdPath);
+                InvokeIndex(index, "AddRootReference", rigidPath, vmdPath);
             }
 
             var state = CreateBareBatchState();
@@ -94,15 +139,19 @@ namespace Test.PackOptimizer.Core
 
             foreach (var candidate in candidates)
             {
+                var wsPath = GetDrawCallSearchWsPath(candidate);
+                var rigidPath = GetDrawCallSearchRigidPath(candidate);
                 var instances = candidate.Attachments
                     .Select(attachment => CreateRecord(
                         "CrossRigidVisualInstance",
                         new Dictionary<string, object?>
                         {
-                            ["WsModelPath"] = DrawCallSearchWsPath,
+                            ["WsModelPath"] = wsPath,
                             ["AttachmentIdentity"] = attachment,
                             ["DefiningVmdPath"] = candidate.VmdPath,
-                            ["ModelXmlPath"] = $"models\\{attachment}.wsmodel",
+                            ["ModelXmlPath"] = candidate.ModelXmlPathByAttachment?
+                                .GetValueOrDefault(attachment) ?? candidate.ModelXmlPath ??
+                                $"models\\{attachment}.wsmodel",
                         }))
                     .ToArray();
                 var sourceInstances = CreateRecordArray(
@@ -123,8 +172,8 @@ namespace Test.PackOptimizer.Core
                     "CrossRigidSourceGeometryComponent",
                     new Dictionary<string, object?>
                     {
-                        ["WsModelPath"] = DrawCallSearchWsPath,
-                        ["RigidPath"] = DrawCallSearchRigidPath,
+                        ["WsModelPath"] = wsPath,
+                        ["RigidPath"] = rigidPath,
                         ["VertexCount"] = 1L,
                         ["GeometryBytes"] = 1L,
                         ["MeshPartCounts"] = new[] { sourceMeshParts },
@@ -160,7 +209,7 @@ namespace Test.PackOptimizer.Core
                         ["SourceGeometry"] = CreateRecordArray(
                             "CrossRigidSourceGeometryComponent",
                             sourceGeometry),
-                        ["RigidPaths"] = new[] { DrawCallSearchRigidPath },
+                        ["RigidPaths"] = new[] { rigidPath },
                         ["Lods"] = lods,
                         ["ExpectedArmyDrawCallsEliminated"] =
                             candidate.DrawsSaved * candidate.Attachments.Length,
@@ -178,8 +227,8 @@ namespace Test.PackOptimizer.Core
                             ["RewritePlanCount"] = 1,
                             ["VmdCount"] = 1,
                             ["SourceWsModelPaths"] =
-                                new[] { DrawCallSearchWsPath },
-                            ["RigidPaths"] = new[] { DrawCallSearchRigidPath },
+                                new[] { wsPath },
+                            ["RigidPaths"] = new[] { rigidPath },
                             ["Lods"] = lods,
                             ["GeneratedVertexCount"] = 1L,
                             ["GeneratedGeometryBytes"] =
@@ -196,7 +245,7 @@ namespace Test.PackOptimizer.Core
                 foreach (var attachment in candidate.Attachments)
                 {
                     var occurrenceIdentity =
-                        candidate.VmdPath + "\u001f" + attachment;
+                        candidate.VmdPath + "\u001f" + attachment + "\u001f" + wsPath;
                     if (!addedOccurrenceKeys.Add(occurrenceIdentity))
                         continue;
 
@@ -206,7 +255,7 @@ namespace Test.PackOptimizer.Core
                         {
                             ["VmdPath"] = candidate.VmdPath,
                             ["AttachmentIdentity"] = attachment,
-                            ["WsModelPath"] = DrawCallSearchWsPath,
+                            ["WsModelPath"] = wsPath,
                         });
                     occurrenceProbabilities.Add(key, 1.0);
                 }
@@ -736,37 +785,145 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void DrawCallPortfolioSearch_CombinesIndependentImprovementsAcrossRounds()
+        {
+            const string first = "payload:iterative-source-a";
+            const string second = "payload:iterative-source-b";
+            var state = CreateDrawCallPortfolioSearchState(
+                [
+                    new DrawCallSearchCandidate(
+                        first,
+                        DrawCallSearchFallbackVmd,
+                        ["source-a"],
+                        GeneratedDraws: 1,
+                        DrawsSaved: 3,
+                        WsModelPath: @"models\iterative-a.wsmodel",
+                        RigidPath: @"variantmeshes\iterative-a.rigid_model_v2"),
+                    new DrawCallSearchCandidate(
+                        second,
+                        DrawCallSearchFallbackVmd,
+                        ["source-b"],
+                        GeneratedDraws: 1,
+                        DrawsSaved: 1,
+                        WsModelPath: @"models\iterative-b.wsmodel",
+                        RigidPath: @"variantmeshes\iterative-b.rigid_model_v2"),
+                ],
+                2);
+
+            var report = RunDrawCallPortfolioSearch(state, limit: 0);
+            var search = GetDrawCallSearchReport(report);
+            Assert.That(
+                Get<HashSet<string>>(state, "CrossRigidSelectedPayloadIds"),
+                Is.EquivalentTo(new[] { first, second }));
+            Assert.That(
+                Get<double>(Get<object>(report, "Evaluation"), "Delta"),
+                Is.LessThanOrEqualTo(0));
+            Assert.That(Get<int>(search, "Rounds"), Is.GreaterThanOrEqualTo(2));
+            Assert.That(Get<int>(search, "Improvements"), Is.GreaterThanOrEqualTo(2));
+            Assert.That(
+                Get<double>(search, "BestObjective"),
+                Is.GreaterThan(Get<double>(search, "IncumbentObjective")));
+        }
+
+        [Test]
+        public void DrawCallPortfolioSearch_UsesAlternativeCoverWhenGreedyCoverConflicts()
+        {
+            const string greedyA = "payload:greedy-a";
+            const string greedyB = "payload:greedy-b";
+            const string alternativeA = "payload:alternative-a";
+            var greedyAlias = @"models\shared-branch.wsmodel";
+            var state = CreateDrawCallPortfolioSearchState(
+                [
+                    new DrawCallSearchCandidate(
+                        greedyA,
+                        DrawCallSearchFallbackVmd,
+                        ["a-1", "a-2", "a-3"],
+                        GeneratedDraws: 1,
+                        DrawsSaved: 2,
+                        ModelXmlPathByAttachment: new Dictionary<string, string>
+                        {
+                            ["a-1"] = greedyAlias,
+                            ["a-2"] = @"models\shared-alternative.wsmodel",
+                            ["a-3"] = @"models\a-3.wsmodel",
+                        }),
+                    new DrawCallSearchCandidate(
+                        greedyB,
+                        DrawCallSearchFallbackVmd,
+                        ["b-1", "b-2", "b-3"],
+                        GeneratedDraws: 1,
+                        DrawsSaved: 2,
+                        ModelXmlPathByAttachment: new Dictionary<string, string>
+                        {
+                            ["b-1"] = greedyAlias,
+                            ["b-2"] = @"models\b-2.wsmodel",
+                            ["b-3"] = @"models\b-3.wsmodel",
+                        }),
+                    new DrawCallSearchCandidate(
+                        alternativeA,
+                        DrawCallSearchFallbackVmd,
+                        ["a-1", "a-2", "a-3"],
+                        GeneratedDraws: 1,
+                        DrawsSaved: 1,
+                        ModelXmlPathByAttachment: new Dictionary<string, string>
+                        {
+                            ["a-1"] = @"models\alternative-a-1.wsmodel",
+                            ["a-2"] = @"models\shared-alternative.wsmodel",
+                            ["a-3"] = @"models\alternative-a-3.wsmodel",
+                        }),
+                ],
+                6);
+
+            var report = RunDrawCallPortfolioSearch(state, limit: 0);
+            var search = GetDrawCallSearchReport(report);
+            Assert.That(
+                Get<HashSet<string>>(state, "CrossRigidSelectedPayloadIds"),
+                Is.EquivalentTo(new[] { greedyB, alternativeA }));
+            Assert.That(
+                Get<double>(Get<object>(report, "Evaluation"), "Delta"),
+                Is.LessThanOrEqualTo(0));
+            Assert.That(
+                Get<int>(search, "AlternativeCohortTrials"),
+                Is.GreaterThan(0));
+        }
+
+        [Test]
         public void DrawCallPortfolioSearch_IsDeterministicAndRespectsTrialBudget()
         {
-            var candidates = Enumerable.Range(0, 70)
+            var candidates = Enumerable.Range(0, 180)
                 .Select(index => new DrawCallSearchCandidate(
                     $"payload:bounded-{index:D2}",
                     DrawCallSearchFallbackVmd,
-                    ["same-occurrence"],
+                    [index % 2 == 0 ? "source-a" : "source-b"],
                     GeneratedDraws: 1,
                     DrawsSaved: 1))
                 .ToArray();
             var state = CreateDrawCallPortfolioSearchState(
                 candidates,
-                1,
-                "payload:bounded-00");
+                2);
 
             var report = RunDrawCallPortfolioSearch(state, limit: 0);
             var search = GetDrawCallSearchReport(report);
             var trials = Get<int>(search, "Trials");
             var budget = Get<int>(search, "TrialBudget");
             Assert.That(trials, Is.LessThanOrEqualTo(budget));
-            Assert.That(Get<bool>(search, "BudgetExhausted"), Is.True);
-            Assert.That(Get<int>(search, "CandidateCount"), Is.GreaterThan(trials));
+            Assert.That(budget, Is.EqualTo(192));
+            Assert.That(Get<int>(search, "PerRoundTrialBudget"), Is.EqualTo(64));
+            Assert.That(Get<int[]>(search, "TrialsByRound")[0], Is.EqualTo(64));
+            Assert.That(Get<int[]>(search, "TrialsByRound").All(count => count <= 64), Is.True);
+            Assert.That(
+                Get<bool>(search, "BudgetExhausted"),
+                Is.True,
+                $"trials={trials}/{budget}, rounds={Get<int>(search, "Rounds")}, " +
+                $"perRound={string.Join(",", Get<int[]>(search, "TrialsByRound"))}");
+            Assert.That(Get<int>(search, "Rounds"), Is.EqualTo(3));
             Assert.That(
                 Get<HashSet<string>>(state, "CrossRigidSelectedPayloadIds"),
-                Has.Count.EqualTo(1),
+                Has.Count.EqualTo(2),
                 "A feasible portfolio remains selected after the bounded search.");
 
             var repeatedState = CreateDrawCallPortfolioSearchState(
                 candidates,
-                1,
-                "payload:bounded-00");
+                2);
             var repeatedReport = RunDrawCallPortfolioSearch(
                 repeatedState,
                 limit: 0);
@@ -774,6 +931,9 @@ namespace Test.PackOptimizer.Core
             Assert.That(
                 Get<int>(repeatedSearch, "Trials"),
                 Is.EqualTo(trials));
+            Assert.That(
+                Get<int[]>(repeatedSearch, "TrialsByRound"),
+                Is.EqualTo(Get<int[]>(search, "TrialsByRound")));
             Assert.That(
                 Get<double>(repeatedSearch, "BestObjective"),
                 Is.EqualTo(Get<double>(search, "BestObjective")));

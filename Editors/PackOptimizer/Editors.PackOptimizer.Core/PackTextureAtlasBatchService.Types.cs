@@ -424,9 +424,14 @@ namespace Editors.PackOptimizer.Core
             double BestDelta,
             int Trials,
             int TrialBudget,
+            int PerRoundTrialBudget,
+            int Rounds,
+            int Improvements,
+            int[] TrialsByRound,
             bool BudgetExhausted,
             int CandidateCount,
             int CohortTrials,
+            int AlternativeCohortTrials,
             string[] AddedPayloadIds,
             string[] RemovedPayloadIds);
 

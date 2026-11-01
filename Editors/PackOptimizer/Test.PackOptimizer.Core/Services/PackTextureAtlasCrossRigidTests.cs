@@ -20073,6 +20073,8 @@ namespace Test.PackOptimizer.Core
             [44] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
             // 45: bounded cross-rigid portfolio search runs after the draw-call gate; the pinned stage fixture does not run selection.
             [45] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 46: iterative cross-rigid portfolio search combines feasible proposals; the pinned stage fixture does not run selection.
+            [46] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()

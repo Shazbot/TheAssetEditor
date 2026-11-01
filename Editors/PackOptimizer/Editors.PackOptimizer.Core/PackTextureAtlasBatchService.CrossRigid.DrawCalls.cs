@@ -40,6 +40,16 @@ namespace Editors.PackOptimizer.Core
                 SelectedJointCombinationKeysByRewriteOccurrenceKey,
             CrossRigidPayloadSelectionEntry[] AcceptedEntries);
 
+        private sealed record CrossRigidPortfolioSearchProposal(
+            CrossRigidPayloadSelectionEntry[] OrderedCandidates,
+            bool IsCohort,
+            bool IsAlternativeCohort);
+
+        private sealed record CrossRigidSourceRigidCompletionCohort(
+            string RigidPath,
+            CrossRigidPayloadSelectionEntry[] Candidates,
+            bool IsAlternative);
+
         private static void ApplyCrossRigidExpectedDrawCallIncreaseGate(BatchState state)
         {
             var settings = CrossRigidBudgetSettings.Current;
@@ -185,26 +195,29 @@ namespace Editors.PackOptimizer.Core
                 double incumbentDelta,
                 CrossRigidDrawCallPortfolioSearchContext? searchContext)
         {
-            const int trialBudget = 64;
+            const int trialsPerRound = 64;
+            const int maxRounds = 3;
+            const int trialBudget = trialsPerRound * maxRounds;
             const int maxReservedSourceRigidCohortTrials = 16;
-            var incumbentIds = state.CrossRigidSelectedPayloadIds
+            const int maxReservedAlternativeCohortTrials = 8;
+            var initialIncumbentIds = state.CrossRigidSelectedPayloadIds
                 .ToHashSet(StringComparer.Ordinal);
-            var incumbentEntries = state.CrossRigidPayloadSelectionEntries
+            var initialIncumbentEntries = state.CrossRigidPayloadSelectionEntries
                 .Where(entry => entry.Accepted &&
-                                incumbentIds.Contains(entry.GeneratedPayloadId))
+                                initialIncumbentIds.Contains(entry.GeneratedPayloadId))
                 .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
                 .Select(group => group.Last())
                 .ToArray();
-            var incumbentObjective = incumbentEntries.Sum(entry =>
+            var incumbentObjective = initialIncumbentEntries.Sum(entry =>
                 entry.MarginalExpectedArmyDrawCallsEliminated);
-            var incumbentGeometryBytes = incumbentEntries.Sum(entry =>
+            var incumbentGeometryBytes = initialIncumbentEntries.Sum(entry =>
                 entry.GeneratedGeometryBytes);
-            var incumbentResidentBytes = incumbentEntries.Sum(entry =>
+            var incumbentResidentBytes = initialIncumbentEntries.Sum(entry =>
                 entry.ExpectedResidentGeneratedGeometryBytes);
             var candidateCount = searchContext?.OrderedCandidates
                 .Select(entry => entry.GeneratedPayloadId)
                 .Distinct(StringComparer.Ordinal)
-                .Count(id => !incumbentIds.Contains(id)) ?? 0;
+                .Count(id => !initialIncumbentIds.Contains(id)) ?? 0;
 
             if (searchContext == null || double.IsPositiveInfinity(limit))
             {
@@ -215,8 +228,13 @@ namespace Editors.PackOptimizer.Core
                     incumbentDelta,
                     0,
                     trialBudget,
+                    trialsPerRound,
+                    0,
+                    0,
+                    Array.Empty<int>(),
                     false,
                     candidateCount,
+                    0,
                     0,
                     Array.Empty<string>(),
                     Array.Empty<string>());
@@ -228,7 +246,391 @@ namespace Editors.PackOptimizer.Core
                     group => group.Key,
                     group => group.First(),
                     StringComparer.Ordinal);
-            var incumbentOrder = state.CrossRigidPayloadSelectionEntries
+            var initialIncumbentOrder = GetCrossRigidPortfolioIncumbentOrder(
+                state,
+                initialIncumbentIds,
+                candidateById);
+            var initialUnselectedCandidates = GetCrossRigidPortfolioUnselectedCandidates(
+                candidateById,
+                initialIncumbentIds,
+                searchContext.InvalidProfiles);
+            var stableRetirementContext = BuildRetirementContext(state);
+            var stableSources = BuildCrossRigidExpectedDrawCallTerms(
+                state,
+                new HashSet<string>(StringComparer.Ordinal),
+                stableRetirementContext).Sources;
+            var globalSeenPortfolioKeys = new HashSet<string>(StringComparer.Ordinal);
+            var trialCountsByRound = new List<int>();
+            var currentObjective = incumbentObjective;
+            var currentGeometryBytes = incumbentGeometryBytes;
+            var currentResidentBytes = incumbentResidentBytes;
+            var currentDelta = incumbentDelta;
+            var totalTrials = 0;
+            var improvements = 0;
+            var cohortTrials = 0;
+            var alternativeCohortTrials = 0;
+            var budgetExhausted = false;
+
+            CrossRigidPortfolioSearchProposal CreateProposal(
+                IReadOnlyList<CrossRigidPayloadSelectionEntry> front,
+                IReadOnlyList<CrossRigidPayloadSelectionEntry> incumbentOrder,
+                bool includeIncumbent,
+                bool isCohort,
+                bool isAlternativeCohort)
+            {
+                var promotedIds = front
+                    .Select(entry => entry.GeneratedPayloadId)
+                    .ToHashSet(StringComparer.Ordinal);
+                var order = includeIncumbent
+                    ? front.Concat(incumbentOrder.Where(entry =>
+                            !promotedIds.Contains(entry.GeneratedPayloadId)))
+                        .ToArray()
+                    : front.ToArray();
+                return new CrossRigidPortfolioSearchProposal(
+                    order,
+                    isCohort,
+                    isAlternativeCohort);
+            }
+
+            var firstPassCohorts = BuildCrossRigidSourceRigidCompletionCohorts(
+                state,
+                initialUnselectedCandidates,
+                initialIncumbentIds,
+                stableRetirementContext,
+                includeAlternatives: false,
+                alternativeLimit: 0);
+            var cohortProposalCount = firstPassCohorts.Length * 2;
+            var cohortReservation = Math.Min(
+                maxReservedSourceRigidCohortTrials,
+                cohortProposalCount);
+            var firstPassSingleCount = Math.Min(
+                initialUnselectedCandidates.Length,
+                trialsPerRound - cohortReservation);
+            var firstPassProposals = new List<CrossRigidPortfolioSearchProposal>();
+            foreach (var candidate in initialUnselectedCandidates.Take(firstPassSingleCount))
+            {
+                firstPassProposals.Add(CreateProposal(
+                    [candidate],
+                    initialIncumbentOrder,
+                    includeIncumbent: true,
+                    isCohort: false,
+                    isAlternativeCohort: false));
+            }
+
+            foreach (var cohort in firstPassCohorts.Take(
+                         (trialsPerRound - firstPassProposals.Count) / 2))
+            {
+                firstPassProposals.Add(CreateProposal(
+                    cohort.Candidates,
+                    initialIncumbentOrder,
+                    includeIncumbent: false,
+                    isCohort: true,
+                    cohort.IsAlternative));
+                firstPassProposals.Add(CreateProposal(
+                    cohort.Candidates,
+                    initialIncumbentOrder,
+                    includeIncumbent: true,
+                    isCohort: true,
+                    cohort.IsAlternative));
+            }
+
+            var firstPassFillerProposals = new List<CrossRigidPortfolioSearchProposal>();
+            foreach (var candidate in initialUnselectedCandidates.Skip(firstPassSingleCount))
+            {
+                firstPassFillerProposals.Add(CreateProposal(
+                    [candidate],
+                    initialIncumbentOrder,
+                    includeIncumbent: true,
+                    isCohort: false,
+                    isAlternativeCohort: false));
+            }
+
+            var firstPassExpandedCohorts = BuildCrossRigidSourceRigidCompletionCohorts(
+                state,
+                initialUnselectedCandidates,
+                initialIncumbentIds,
+                stableRetirementContext,
+                includeAlternatives: true,
+                alternativeLimit: 2);
+            foreach (var cohort in firstPassExpandedCohorts)
+            {
+                firstPassFillerProposals.Add(CreateProposal(
+                    cohort.Candidates,
+                    initialIncumbentOrder,
+                    includeIncumbent: false,
+                    isCohort: true,
+                    cohort.IsAlternative));
+                firstPassFillerProposals.Add(CreateProposal(
+                    cohort.Candidates,
+                    initialIncumbentOrder,
+                    includeIncumbent: true,
+                    isCohort: true,
+                    cohort.IsAlternative));
+            }
+
+            for (var roundIndex = 0; roundIndex < maxRounds; roundIndex++)
+            {
+                var currentIds = state.CrossRigidSelectedPayloadIds
+                    .ToHashSet(StringComparer.Ordinal);
+                var retirementContext = BuildRetirementContext(state);
+                var incumbentOrder = roundIndex == 0
+                    ? initialIncumbentOrder
+                    : GetCrossRigidPortfolioIncumbentOrder(
+                        state,
+                        currentIds,
+                        candidateById);
+                var proposals = new List<CrossRigidPortfolioSearchProposal>();
+                if (roundIndex == 0)
+                {
+                    // Keep the complete v45 proposal prefix intact. Fill any slots lost
+                    // to duplicate portfolios only after that prefix has been queued.
+                    proposals.AddRange(firstPassProposals);
+                    proposals.AddRange(firstPassFillerProposals);
+                }
+                else
+                {
+                    var unselectedCandidates = GetCrossRigidPortfolioUnselectedCandidates(
+                        candidateById,
+                        currentIds,
+                        searchContext.InvalidProfiles);
+                    foreach (var candidate in unselectedCandidates)
+                    {
+                        proposals.Add(CreateProposal(
+                            [candidate],
+                            incumbentOrder,
+                            includeIncumbent: true,
+                            isCohort: false,
+                            isAlternativeCohort: false));
+                        // A candidate alone can replace an incumbent that consumes
+                        // geometry budget even when no occurrence key conflicts.
+                        proposals.Add(CreateProposal(
+                            [candidate],
+                            incumbentOrder,
+                            includeIncumbent: false,
+                            isCohort: false,
+                            isAlternativeCohort: false));
+                    }
+
+                    var expandedCohorts = BuildCrossRigidSourceRigidCompletionCohorts(
+                        state,
+                        unselectedCandidates,
+                        currentIds,
+                        retirementContext,
+                        includeAlternatives: true,
+                        alternativeLimit: roundIndex == 1 ? 4 : 8);
+                    foreach (var cohort in expandedCohorts)
+                    {
+                        proposals.Add(CreateProposal(
+                            cohort.Candidates,
+                            incumbentOrder,
+                            includeIncumbent: false,
+                            isCohort: true,
+                            cohort.IsAlternative));
+                        proposals.Add(CreateProposal(
+                            cohort.Candidates,
+                            incumbentOrder,
+                            includeIncumbent: true,
+                            isCohort: true,
+                            cohort.IsAlternative));
+                    }
+                }
+
+                var evaluatedThisRound = 0;
+                var seenInRound = new HashSet<string>(StringComparer.Ordinal);
+                CrossRigidDrawCallPortfolioTrial? bestTrial = null;
+                var bestObjective = currentObjective;
+                var bestGeometryBytes = currentGeometryBytes;
+                var bestResidentBytes = currentResidentBytes;
+                var bestDelta = currentDelta;
+                bool TryEvaluateProposal(CrossRigidPortfolioSearchProposal proposal)
+                {
+                    var portfolioKey = BuildCrossRigidPortfolioSearchKey(
+                        proposal.OrderedCandidates);
+                    if (globalSeenPortfolioKeys.Contains(portfolioKey) ||
+                        !seenInRound.Add(portfolioKey))
+                    {
+                        return false;
+                    }
+
+                    if (totalTrials >= trialBudget)
+                    {
+                        budgetExhausted = true;
+                        return false;
+                    }
+
+                    if (evaluatedThisRound >= trialsPerRound)
+                        return false;
+
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    globalSeenPortfolioKeys.Add(portfolioKey);
+                    totalTrials++;
+                    evaluatedThisRound++;
+                    if (proposal.IsCohort)
+                    {
+                        cohortTrials++;
+                        if (proposal.IsAlternativeCohort)
+                            alternativeCohortTrials++;
+                    }
+
+                    var trial = EvaluateCrossRigidPortfolioWithSharedFallbacks(
+                        state,
+                        proposal.OrderedCandidates,
+                        searchContext,
+                        retirementContext,
+                        stableSources);
+                    if (double.IsNaN(trial.Delta) ||
+                        trial.Delta >
+                        limit + AtlasValueGateExpectedDrawEpsilon)
+                    {
+                        return true;
+                    }
+
+                    if (!IsBetterCrossRigidDrawCallPortfolioTrial(
+                            trial,
+                            bestObjective,
+                            bestGeometryBytes,
+                            bestResidentBytes))
+                    {
+                        return true;
+                    }
+
+                    bestObjective = trial.Objective;
+                    bestGeometryBytes = trial.GeometryBytes;
+                    bestResidentBytes = trial.ResidentBytes;
+                    bestDelta = trial.Delta;
+                    bestTrial = trial;
+                    return true;
+                }
+
+                var cohortProposals = proposals
+                    .Where(proposal => proposal.IsCohort)
+                    .ToArray();
+                var singleProposals = proposals
+                    .Where(proposal => !proposal.IsCohort)
+                    .ToArray();
+                if (roundIndex == 0)
+                {
+                    // The first-pass order is the committed v45 sequence, followed by
+                    // refill proposals. Keep that ordering intact for non-regression.
+                    foreach (var proposal in proposals)
+                    {
+                        if (evaluatedThisRound >= trialsPerRound || budgetExhausted)
+                            break;
+                        TryEvaluateProposal(proposal);
+                    }
+                }
+                else
+                {
+                    var reservedCohortTrials = 0;
+                    var reservedAlternativeTrials = 0;
+                    foreach (var proposal in cohortProposals.Where(
+                                 candidate => candidate.IsAlternativeCohort))
+                    {
+                        if (reservedAlternativeTrials >= maxReservedAlternativeCohortTrials ||
+                            evaluatedThisRound >= trialsPerRound ||
+                            budgetExhausted)
+                        {
+                            break;
+                        }
+
+                        if (TryEvaluateProposal(proposal))
+                        {
+                            reservedAlternativeTrials++;
+                            reservedCohortTrials++;
+                        }
+                    }
+
+                    foreach (var proposal in cohortProposals.Where(
+                                 candidate => !candidate.IsAlternativeCohort))
+                    {
+                        if (reservedCohortTrials >= maxReservedSourceRigidCohortTrials ||
+                            evaluatedThisRound >= trialsPerRound ||
+                            budgetExhausted)
+                        {
+                            break;
+                        }
+
+                        if (TryEvaluateProposal(proposal))
+                            reservedCohortTrials++;
+                    }
+
+                    foreach (var proposal in singleProposals)
+                    {
+                        if (evaluatedThisRound >= trialsPerRound || budgetExhausted)
+                            break;
+                        TryEvaluateProposal(proposal);
+                    }
+
+                    foreach (var proposal in cohortProposals)
+                    {
+                        if (evaluatedThisRound >= trialsPerRound || budgetExhausted)
+                            break;
+                        TryEvaluateProposal(proposal);
+                    }
+                }
+
+                if (totalTrials >= trialBudget && !budgetExhausted)
+                {
+                    budgetExhausted = proposals.Any(proposal =>
+                        !globalSeenPortfolioKeys.Contains(
+                            BuildCrossRigidPortfolioSearchKey(
+                                proposal.OrderedCandidates)));
+                }
+
+                if (evaluatedThisRound == 0)
+                    break;
+
+                trialCountsByRound.Add(evaluatedThisRound);
+                if (bestTrial != null)
+                {
+                    ApplyCrossRigidPortfolioTrial(state, bestTrial, currentIds);
+                    currentObjective = bestObjective;
+                    currentGeometryBytes = bestGeometryBytes;
+                    currentResidentBytes = bestResidentBytes;
+                    currentDelta = bestDelta;
+                    improvements++;
+                }
+
+                if (budgetExhausted)
+                    break;
+            }
+
+            return new CrossRigidExpectedDrawCallPortfolioSearchReport(
+                incumbentObjective,
+                currentObjective,
+                incumbentDelta,
+                currentDelta,
+                totalTrials,
+                trialBudget,
+                trialsPerRound,
+                trialCountsByRound.Count,
+                improvements,
+                trialCountsByRound.ToArray(),
+                budgetExhausted,
+                candidateCount,
+                cohortTrials,
+                alternativeCohortTrials,
+                state.CrossRigidSelectedPayloadIds
+                    .Except(initialIncumbentIds, StringComparer.Ordinal)
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .ToArray(),
+                initialIncumbentIds
+                    .Except(state.CrossRigidSelectedPayloadIds, StringComparer.Ordinal)
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .ToArray());
+        }
+
+        private static string BuildCrossRigidPortfolioSearchKey(
+            IReadOnlyList<CrossRigidPayloadSelectionEntry> orderedCandidates)
+            => string.Concat(orderedCandidates.Select(entry =>
+                entry.GeneratedPayloadId.Length.ToString(CultureInfo.InvariantCulture) + ":" +
+                entry.GeneratedPayloadId));
+
+        private static CrossRigidPayloadSelectionEntry[] GetCrossRigidPortfolioIncumbentOrder(
+            BatchState state,
+            IReadOnlySet<string> incumbentIds,
+            IReadOnlyDictionary<string, CrossRigidPayloadSelectionEntry> candidateById)
+            => state.CrossRigidPayloadSelectionEntries
                 .Where(entry => entry.Accepted &&
                                 incumbentIds.Contains(entry.GeneratedPayloadId))
                 .Select(entry => candidateById.GetValueOrDefault(entry.GeneratedPayloadId))
@@ -237,138 +639,26 @@ namespace Editors.PackOptimizer.Core
                 .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
                 .Select(group => group.First())
                 .ToArray();
-            var unselectedCandidates = candidateById.Values
-                .Where(entry => !incumbentIds.Contains(entry.GeneratedPayloadId) &&
-                                !searchContext.InvalidProfiles.Contains(entry.GeneratedPayloadId))
+
+        private static CrossRigidPayloadSelectionEntry[] GetCrossRigidPortfolioUnselectedCandidates(
+            IReadOnlyDictionary<string, CrossRigidPayloadSelectionEntry> candidateById,
+            IReadOnlySet<string> selectedIds,
+            IReadOnlySet<string> invalidProfiles)
+            => candidateById.Values
+                .Where(entry => !selectedIds.Contains(entry.GeneratedPayloadId) &&
+                                !invalidProfiles.Contains(entry.GeneratedPayloadId))
                 .OrderByDescending(entry => entry.ExpectedArmyDrawCallsEliminated)
                 .ThenBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
                 .ToArray();
-            var retirementContext = BuildRetirementContext(state);
-            var stableSources = BuildCrossRigidExpectedDrawCallTerms(
-                state,
-                new HashSet<string>(StringComparer.Ordinal),
-                retirementContext).Sources;
-            var cohortFronts = BuildCrossRigidSourceRigidCompletionCohorts(
-                state,
-                unselectedCandidates,
-                incumbentIds,
-                retirementContext);
-            var cohortProposalCount = cohortFronts.Length * 2;
-            var cohortReservation = Math.Min(
-                maxReservedSourceRigidCohortTrials,
-                cohortProposalCount);
-            var singleTrialCount = Math.Min(
-                unselectedCandidates.Length,
-                trialBudget - cohortReservation);
-            var proposals = new List<(
-                CrossRigidPayloadSelectionEntry[] Front,
-                bool IsCohort,
-                bool IncludeIncumbent)>();
-            foreach (var candidate in unselectedCandidates.Take(singleTrialCount))
-            {
-                proposals.Add((new[] { candidate }, false, true));
-            }
 
-            foreach (var cohort in cohortFronts.Take((trialBudget - proposals.Count) / 2))
-            {
-                proposals.Add((cohort, true, false));
-                proposals.Add((cohort, true, true));
-            }
-
-            var distinctProposals = new List<(
-                CrossRigidPayloadSelectionEntry[] Front,
-                bool IsCohort,
-                bool IncludeIncumbent)>();
-            var seenOrders = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var proposal in proposals)
-            {
-                var promotedIds = proposal.Front
-                    .Select(entry => entry.GeneratedPayloadId)
-                    .ToHashSet(StringComparer.Ordinal);
-                var order = proposal.IncludeIncumbent
-                    ? proposal.Front
-                        .Concat(incumbentOrder.Where(entry =>
-                            !promotedIds.Contains(entry.GeneratedPayloadId)))
-                        .ToArray()
-                    : proposal.Front;
-                var key = string.Concat(order.Select(entry =>
-                    entry.GeneratedPayloadId.Length.ToString(CultureInfo.InvariantCulture) + ":" +
-                    entry.GeneratedPayloadId));
-                if (seenOrders.Add(key))
-                    distinctProposals.Add((order, proposal.IsCohort, proposal.IncludeIncumbent));
-            }
-
-            var bestObjective = incumbentObjective;
-            var bestGeometryBytes = incumbentGeometryBytes;
-            var bestResidentBytes = incumbentResidentBytes;
-            var bestDelta = incumbentDelta;
-            CrossRigidDrawCallPortfolioTrial? bestTrial = null;
-            var trials = 0;
-            var cohortTrials = 0;
-            foreach (var proposal in distinctProposals.Take(trialBudget))
-            {
-                state.CancellationToken.ThrowIfCancellationRequested();
-                trials++;
-                if (proposal.IsCohort)
-                    cohortTrials++;
-
-                var trial = EvaluateCrossRigidPortfolioWithSharedFallbacks(
-                    state,
-                    proposal.Front,
-                    searchContext,
-                    retirementContext,
-                    stableSources);
-                if (trial.Delta > limit)
-                    continue;
-
-                if (!IsBetterCrossRigidDrawCallPortfolioTrial(
-                        trial,
-                        bestObjective,
-                        bestGeometryBytes,
-                        bestResidentBytes))
-                {
-                    continue;
-                }
-
-                bestObjective = trial.Objective;
-                bestGeometryBytes = trial.GeometryBytes;
-                bestResidentBytes = trial.ResidentBytes;
-                bestDelta = trial.Delta;
-                bestTrial = trial;
-            }
-
-            if (bestTrial != null)
-            {
-                ApplyCrossRigidPortfolioTrial(state, bestTrial, incumbentIds);
-            }
-
-            return new CrossRigidExpectedDrawCallPortfolioSearchReport(
-                incumbentObjective,
-                bestObjective,
-                incumbentDelta,
-                bestDelta,
-                trials,
-                trialBudget,
-                unselectedCandidates.Length > singleTrialCount ||
-                cohortProposalCount > trialBudget - singleTrialCount,
-                candidateCount,
-                cohortTrials,
-                state.CrossRigidSelectedPayloadIds
-                    .Except(incumbentIds, StringComparer.Ordinal)
-                    .OrderBy(id => id, StringComparer.Ordinal)
-                    .ToArray(),
-                incumbentIds
-                    .Except(state.CrossRigidSelectedPayloadIds, StringComparer.Ordinal)
-                    .OrderBy(id => id, StringComparer.Ordinal)
-                    .ToArray());
-        }
-
-        private static CrossRigidPayloadSelectionEntry[][]
+        private static CrossRigidSourceRigidCompletionCohort[]
             BuildCrossRigidSourceRigidCompletionCohorts(
                 BatchState state,
                 IReadOnlyList<CrossRigidPayloadSelectionEntry> candidates,
                 IReadOnlySet<string> incumbentPayloadIds,
-                RetirementContext retirementContext)
+                RetirementContext retirementContext,
+                bool includeAlternatives,
+                int alternativeLimit)
         {
             var candidateById = candidates
                 .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
@@ -437,7 +727,8 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
-            var cohorts = new List<(string RigidPath, CrossRigidPayloadSelectionEntry[] Candidates)>();
+            var originalCohorts = new List<CrossRigidSourceRigidCompletionCohort>();
+            var alternativeCohorts = new List<CrossRigidSourceRigidCompletionCohort>();
             foreach (var (rigid, candidateCoverage) in candidateCoverageByRigid
                          .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
             {
@@ -464,77 +755,192 @@ namespace Editors.PackOptimizer.Core
                 if (remaining.Count == 0)
                     continue;
 
-                var chosen = new List<CrossRigidPayloadSelectionEntry>();
-                var chosenIds = new HashSet<string>(StringComparer.Ordinal);
-                while (remaining.Count != 0 && chosen.Count < 8)
+                var originalCover = BuildCrossRigidSourceRigidCompletionCover(
+                    candidateCoverage,
+                    candidateById,
+                    remaining,
+                    incumbentPayloadIds,
+                    null);
+                if (originalCover != null)
                 {
-                    CrossRigidPayloadSelectionEntry? bestCandidate = null;
-                    double bestGain = 0;
-                    foreach (var (payloadId, coverageByOccurrence) in candidateCoverage)
-                    {
-                        if (incumbentPayloadIds.Contains(payloadId) ||
-                            chosenIds.Contains(payloadId) ||
-                            !candidateById.TryGetValue(payloadId, out var candidate))
-                        {
-                            continue;
-                        }
+                    originalCohorts.Add(new CrossRigidSourceRigidCompletionCohort(
+                        rigid,
+                        originalCover,
+                        IsAlternative: false));
+                }
+                if (!includeAlternatives || alternativeLimit <= 0)
+                    continue;
 
-                        var gain = remaining.Sum(item => Math.Min(
-                            item.Value,
-                            coverageByOccurrence.GetValueOrDefault(item.Key)));
-                        if (gain > bestGain + AtlasValueGateExpectedDrawEpsilon ||
-                            (Math.Abs(gain - bestGain) <= AtlasValueGateExpectedDrawEpsilon &&
-                             gain > AtlasValueGateExpectedDrawEpsilon &&
-                             (bestCandidate == null ||
-                              candidate.ExpectedArmyDrawCallsEliminated >
-                                  bestCandidate.ExpectedArmyDrawCallsEliminated +
-                                  AtlasValueGateExpectedDrawEpsilon ||
-                              (Math.Abs(candidate.ExpectedArmyDrawCallsEliminated -
-                                        bestCandidate.ExpectedArmyDrawCallsEliminated) <=
-                               AtlasValueGateExpectedDrawEpsilon &&
-                               string.CompareOrdinal(
-                                   candidate.GeneratedPayloadId,
-                                   bestCandidate.GeneratedPayloadId) < 0))))
-                        {
-                            bestGain = gain;
-                            bestCandidate = candidate;
-                        }
-                    }
-
-                    if (bestCandidate == null ||
-                        bestGain <= AtlasValueGateExpectedDrawEpsilon)
-                    {
+                var seenAlternativeCovers = new HashSet<string>(StringComparer.Ordinal);
+                if (originalCover != null)
+                    seenAlternativeCovers.Add(
+                        BuildCrossRigidPortfolioSearchKey(originalCover));
+                var alternativeCount = 0;
+                foreach (var winner in originalCover ?? Array.Empty<CrossRigidPayloadSelectionEntry>())
+                {
+                    if (alternativeCount >= alternativeLimit)
                         break;
-                    }
-
-                    chosen.Add(bestCandidate);
-                    chosenIds.Add(bestCandidate.GeneratedPayloadId);
-                    var chosenCoverage = candidateCoverage[
-                        bestCandidate.GeneratedPayloadId];
-                    foreach (var occurrenceKey in remaining.Keys.ToArray())
-                    {
-                        var uncovered = remaining[occurrenceKey] -
-                                        chosenCoverage.GetValueOrDefault(occurrenceKey);
-                        if (uncovered <= AtlasValueGateExpectedDrawEpsilon)
-                            remaining.Remove(occurrenceKey);
-                        else
-                            remaining[occurrenceKey] = uncovered;
-                    }
+                    var excluded = incumbentPayloadIds.ToHashSet(StringComparer.Ordinal);
+                    excluded.Add(winner.GeneratedPayloadId);
+                    var alternativeCover = BuildCrossRigidSourceRigidCompletionCover(
+                        candidateCoverage,
+                        candidateById,
+                        remaining,
+                        excluded,
+                        null);
+                    if (!AddAlternativeCover(alternativeCover))
+                        continue;
                 }
 
-                // A partial prefix is only a seed, not a completion cohort.
-                if (remaining.Count == 0 && chosen.Count >= 2)
+                var seedCandidates = candidateCoverage
+                    .Select(pair => (
+                        PayloadId: pair.Key,
+                        Gain: remaining.Sum(item => Math.Min(
+                            item.Value,
+                            pair.Value.GetValueOrDefault(item.Key)))))
+                    .Where(candidate =>
+                        candidate.Gain > AtlasValueGateExpectedDrawEpsilon &&
+                        !incumbentPayloadIds.Contains(candidate.PayloadId))
+                    .OrderByDescending(candidate => candidate.Gain)
+                    .ThenByDescending(candidate => candidateById[candidate.PayloadId]
+                        .ExpectedArmyDrawCallsEliminated)
+                    .ThenBy(candidate => candidate.PayloadId, StringComparer.Ordinal)
+                    .Take(Math.Max(4, alternativeLimit * 2));
+                foreach (var seed in seedCandidates)
                 {
-                    cohorts.Add((rigid, chosen.ToArray()));
+                    if (alternativeCount >= alternativeLimit)
+                        break;
+                    var alternativeCover = BuildCrossRigidSourceRigidCompletionCover(
+                        candidateCoverage,
+                        candidateById,
+                        remaining,
+                        incumbentPayloadIds,
+                        seed.PayloadId);
+                    AddAlternativeCover(alternativeCover);
+                }
+
+                bool AddAlternativeCover(CrossRigidPayloadSelectionEntry[]? cover)
+                {
+                    if (cover == null || cover.Length < 2)
+                        return false;
+                    var key = BuildCrossRigidPortfolioSearchKey(cover);
+                    if (!seenAlternativeCovers.Add(key))
+                        return false;
+                    alternativeCohorts.Add(new CrossRigidSourceRigidCompletionCohort(
+                        rigid,
+                        cover,
+                        IsAlternative: true));
+                    alternativeCount++;
+                    return true;
                 }
             }
 
-            return cohorts
+            return originalCohorts
                 .OrderByDescending(cohort => cohort.Candidates.Sum(candidate =>
                     candidate.ExpectedArmyDrawCallsEliminated))
                 .ThenBy(cohort => cohort.RigidPath, StringComparer.OrdinalIgnoreCase)
-                .Select(cohort => cohort.Candidates)
+                .Concat(alternativeCohorts
+                    .OrderByDescending(cohort => cohort.Candidates.Sum(candidate =>
+                        candidate.ExpectedArmyDrawCallsEliminated))
+                    .ThenBy(cohort => cohort.RigidPath, StringComparer.OrdinalIgnoreCase))
                 .ToArray();
+        }
+
+        private static CrossRigidPayloadSelectionEntry[]?
+            BuildCrossRigidSourceRigidCompletionCover(
+                IReadOnlyDictionary<
+                    string,
+                    Dictionary<CrossRigidWsModelOccurrenceKey, double>> candidateCoverage,
+                IReadOnlyDictionary<string, CrossRigidPayloadSelectionEntry> candidateById,
+                IReadOnlyDictionary<CrossRigidWsModelOccurrenceKey, double> targetCoverage,
+                IReadOnlySet<string> excludedPayloadIds,
+                string? forcedFirstPayloadId)
+        {
+            var remaining = new Dictionary<CrossRigidWsModelOccurrenceKey, double>(
+                targetCoverage);
+            var chosen = new List<CrossRigidPayloadSelectionEntry>();
+            var chosenIds = new HashSet<string>(StringComparer.Ordinal);
+
+            void Select(string payloadId)
+            {
+                var candidateCoverageByOccurrence = candidateCoverage[payloadId];
+                chosen.Add(candidateById[payloadId]);
+                chosenIds.Add(payloadId);
+                foreach (var occurrenceKey in remaining.Keys.ToArray())
+                {
+                    var uncovered = remaining[occurrenceKey] -
+                                    candidateCoverageByOccurrence.GetValueOrDefault(
+                                        occurrenceKey);
+                    if (uncovered <= AtlasValueGateExpectedDrawEpsilon)
+                        remaining.Remove(occurrenceKey);
+                    else
+                        remaining[occurrenceKey] = uncovered;
+                }
+            }
+
+            if (forcedFirstPayloadId != null)
+            {
+                if (excludedPayloadIds.Contains(forcedFirstPayloadId) ||
+                    !candidateCoverage.ContainsKey(forcedFirstPayloadId))
+                {
+                    return null;
+                }
+
+                var forcedGain = remaining.Sum(item => Math.Min(
+                    item.Value,
+                    candidateCoverage[forcedFirstPayloadId].GetValueOrDefault(item.Key)));
+                if (forcedGain <= AtlasValueGateExpectedDrawEpsilon)
+                    return null;
+                Select(forcedFirstPayloadId);
+            }
+
+            while (remaining.Count != 0 && chosen.Count < 8)
+            {
+                CrossRigidPayloadSelectionEntry? bestCandidate = null;
+                double bestGain = 0;
+                foreach (var (payloadId, coverageByOccurrence) in candidateCoverage)
+                {
+                    if (excludedPayloadIds.Contains(payloadId) ||
+                        chosenIds.Contains(payloadId) ||
+                        !candidateById.TryGetValue(payloadId, out var candidate))
+                    {
+                        continue;
+                    }
+
+                    var gain = remaining.Sum(item => Math.Min(
+                        item.Value,
+                        coverageByOccurrence.GetValueOrDefault(item.Key)));
+                    if (gain > bestGain + AtlasValueGateExpectedDrawEpsilon ||
+                        (Math.Abs(gain - bestGain) <= AtlasValueGateExpectedDrawEpsilon &&
+                         gain > AtlasValueGateExpectedDrawEpsilon &&
+                         (bestCandidate == null ||
+                          candidate.ExpectedArmyDrawCallsEliminated >
+                              bestCandidate.ExpectedArmyDrawCallsEliminated +
+                              AtlasValueGateExpectedDrawEpsilon ||
+                          (Math.Abs(candidate.ExpectedArmyDrawCallsEliminated -
+                                    bestCandidate.ExpectedArmyDrawCallsEliminated) <=
+                           AtlasValueGateExpectedDrawEpsilon &&
+                           string.CompareOrdinal(
+                               candidate.GeneratedPayloadId,
+                               bestCandidate.GeneratedPayloadId) < 0))))
+                    {
+                        bestGain = gain;
+                        bestCandidate = candidate;
+                    }
+                }
+
+                if (bestCandidate == null ||
+                    bestGain <= AtlasValueGateExpectedDrawEpsilon)
+                {
+                    break;
+                }
+
+                Select(bestCandidate.GeneratedPayloadId);
+            }
+
+            return remaining.Count == 0 && chosen.Count >= 2
+                ? chosen.ToArray()
+                : null;
         }
 
         private static bool IsBetterCrossRigidDrawCallPortfolioTrial(
@@ -1384,15 +1790,24 @@ namespace Editors.PackOptimizer.Core
                 $"Payloads dropped by the gate: {report.DroppedPayloads.Length:N0}; " +
                 $"instance draws given up: {FormatExpectedDrawCallNumber(report.InstanceDrawsGivenUp)}");
             var portfolioSearch = report.PortfolioSearch;
+            var trialsByRound = portfolioSearch.TrialsByRound.Length == 0
+                ? "(none)"
+                : string.Join(", ", portfolioSearch.TrialsByRound.Select(trials =>
+                    trials.ToString("N0", CultureInfo.InvariantCulture)));
             sb.AppendLine(
                 $"Post-gate portfolio search: incumbent objective={FormatExpectedDrawCallNumber(portfolioSearch.IncumbentObjective)}, " +
                 $"best objective={FormatExpectedDrawCallNumber(portfolioSearch.BestObjective)}, " +
                 $"modeled Δ={FormatExpectedDrawCallNumber(portfolioSearch.IncumbentDelta)} -> " +
                 $"{FormatExpectedDrawCallNumber(portfolioSearch.BestDelta)}; " +
-                $"trials={portfolioSearch.Trials:N0}/{portfolioSearch.TrialBudget:N0}, " +
+                $"trials={portfolioSearch.Trials:N0}/{portfolioSearch.TrialBudget:N0} (global), " +
+                $"per-round budget={portfolioSearch.PerRoundTrialBudget:N0}, " +
+                $"rounds={portfolioSearch.Rounds:N0}, " +
+                $"improvements={portfolioSearch.Improvements:N0}, " +
+                $"trials by round=[{trialsByRound}], " +
                 $"budget exhausted={(portfolioSearch.BudgetExhausted ? "yes" : "no")}, " +
                 $"unselected candidates={portfolioSearch.CandidateCount:N0}, " +
-                $"source-rigid cohorts tried={portfolioSearch.CohortTrials:N0}");
+                $"source-rigid cohorts tried={portfolioSearch.CohortTrials:N0}, " +
+                $"alternative cohort trials={portfolioSearch.AlternativeCohortTrials:N0}");
             if (portfolioSearch.AddedPayloadIds.Length != 0 ||
                 portfolioSearch.RemovedPayloadIds.Length != 0)
             {

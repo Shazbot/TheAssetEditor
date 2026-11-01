@@ -1070,3 +1070,39 @@ TEB finds a previously unselected supplementary payload, `a54ba4bf2acde04a7fa197
 Single-run processing/total time: TEB 165.7/169.4 s versus v44 147.9/150.8 s; Albion 91.4/95.4 s versus 85.9/89.3 s. These are observations, not controlled performance comparisons. Infinity preserves baseline asset contents: TEB all 6,746 path/hash entries match; Albion all 4,816 path/hash entries also match.
 
 Validation: 749 focused Debug tests pass (including coordinated same-VMD source retirement, conflicting replacement, incumbent retention/hard limit, deterministic bounded trials, infinity, existing gate tests and golden v45). Release benchmark build passes with 0 errors; existing warnings remain. WHMM default validation returns valid=true for both, with existing incomplete coverage. Albion has no added diagnostics. TEB adds four MISSING_RMV2_TEXTURE warnings, one per LOD, on the new generated rigid, so its baseline diagnostic comparison reports regressed=true. WHMM inspection and a paginated baseline diagnostic query confirm the exact missing `emp_young_nobles_torso_specular.dds` references and warnings already occur on all four LODs of source `ak_teb_carab_shoulder_01.rigid_model_v2`; this is copied embedded material metadata at a new path, not a newly introduced texture reference. No added structural diagnostics were reported. JSON evidence is saved beside results.md. No WHMM host update was built or shipped.
+
+
+## 2026-11-01: Iterative portfolio search, duplicate refill, alternative covers (OutputVersion 46)
+
+Extended the committed v45 search (`4bf09b722`) with three requested improvements. It now evaluates up to three rounds of 64 actual unique proposals, 192 globally. The full v45 proposal prefix stays first; duplicate portfolios no longer consume evaluation slots. Each accepted best portfolio becomes the next round's incumbent, with retirement coverage rebuilt from the new selected state. Subsequent rounds reserve up to eight actual alternative-cover trials and up to eight original-cover trials before filling remaining slots. Alternative covers force a different starting payload or exclude greedy winners; cohorts still contain at most eight payloads. Global deduplication prevents repeating identical ordered candidate portfolios. Every trial retains exact occurrence/joint conflict, geometry, residency, shared-fallback, and final draw-limit checks. Infinity skips search. This remains bounded heuristic search, not proof of global optimality.
+
+Same workshop TEB/Albion inputs and bench defaults as v45, no consumer packs. Results: **no additional instance savings on either pack**. TEB still keeps one payload / 1.528 expected part-instance savings at modeled delta0; Albion keeps four /0.705 at delta-0.026. Both use all192 actual trials in three64-trial rounds, with untested proposals remaining. TEB has one accepted improvement from its post-prune empty state (the same improvement v45 found); Albion has zero. This shows the proposed search capabilities work, but they did not improve these measured outputs.
+
+Final per-pack report counters and timing:
+
+- TEB: Post-gate portfolio search: incumbent objective=0, best objective=1.528, modeled Δ=0 -> 0; trials=192/192 (global), per-round budget=64, rounds=3, improvements=1, trials by round=[64, 64, 64], budget exhausted=yes, unselected candidates=1.848, source-rigid cohorts tried=40, alternative cohort trials=16
+  Pack bytes=533477400; asset hashes identical to v45=True. process_seconds=169.0; total_seconds=172.2; consumer_packs=0; consumer_load_seconds=0.0; peak_working_set_mib=4770; externally_used_files=0; frozen_files=0;
+
+- ALBION: Post-gate portfolio search: incumbent objective=0.705, best objective=0.705, modeled Δ=-0.026 -> -0.026; trials=192/192 (global), per-round budget=64, rounds=3, improvements=0, trials by round=[64, 64, 64], budget exhausted=yes, unselected candidates=593, source-rigid cohorts tried=36, alternative cohort trials=16
+  Pack bytes=662875878; asset hashes identical to v45=True. process_seconds=98.1; total_seconds=101.8; consumer_packs=0; consumer_load_seconds=0.0; peak_working_set_mib=4319; externally_used_files=0; frozen_files=0;
+
+
+Final defaults have the same asset paths/hashes and pack bytes as committed v45: TEB4,476 files /533,477,400 bytes; Albion4,678 /662,875,878. Both infinity runs also match v45 exactly (TEB6,746 files, Albion4,816). Initial finite runs were repeated only after fixing report formatting to print the already-recorded rounds/improvements/alternative counts; their output asset hashes also match final runs. Timings are single observations, not controlled performance comparisons. The prior v45 finite process times were165.7s TEB and91.4s Albion.
+
+Verification:751 focused Debug tests pass, including sequential independent real source retirements combining across rounds, a conflict-rescued alternative cover, duplicate refill reaching64 first-round trials, deterministic global192 exhaustion with remaining candidates, infinity and golden v46. Release PackOptimizerBench build passes (0 errors; existing warnings); git diff check clean. WHMM `pack validate --baseline --with-vanilla --format json` against v45: valid=true, regressed=false, zero added diagnostics for both defaults. Existing missing texture/loader/unsupported-part/table coverage remains; validationComplete=false. Final default asset identity makes these validation results applicable after the report-only fix.
+
+Artifacts: `K:\projects\assedfork-bench\cross-rigid-iterative-search-20261101`; accepted default runs `final-teb-0` and `final-albion-0`, infinity runs `teb-inf` and `albion-inf`; earlier `teb-0`/`albion-0` runs have identical assets but omit new round counter formatting. No WHMM host build or shipment; the v46 changes are retained by user decision and included in the next commit after 4bf09b722. Increasing search work alone has not produced further gains in these fixtures; do not describe this as globally optimal or assume a higher budget helps without measuring.
+
+
+### Retention decision and timing comparison (2026-11-01)
+
+The user chose to **keep all three v46 improvements for now**: iterative rounds, duplicate-slot refill, and alternative retirement covers. Retain them despite no extra savings on TEB or Albion; the measured outputs remain identical to v45. Do not remove them merely on the basis of the current no-gain result.
+
+Optimization processing times from the saved wall_time.txt files:
+
+| Pack | v45 | v46 initial run | v46 final report run | Difference from v45 |
+|---|---:|---:|---:|---:|
+| TEB | 165.7 s | 169.0 s | 169.0 s | +3.3 s (+2.0%) in both runs |
+| Albion | 91.4 s | 87.2 s | 98.1 s | -4.2 s / +6.7 s |
+
+TEB shows a small consistent overhead in these observations. Albion varies too much to establish a slowdown. These were not controlled repeated timing trials, and the three improvements were not measured separately. The case for dropping them was added code/search work without a measured output gain, not a large proven timing penalty; the user's decision is to retain them. Existing 751 passing tests, successful Release build, asset-identity checks, and WHMM validation remain the verification record; this retention note changes no implementation.
