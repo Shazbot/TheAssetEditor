@@ -9,6 +9,37 @@ namespace Editors.PackOptimizer.Core
             IReadOnlyDictionary<string, double> GeneratedExpectedDrawCallsByPayload,
             IReadOnlyList<(string RigidPath, double ExpectedMeshParts)> Sources);
 
+        private sealed record CrossRigidDrawCallPortfolioStateSnapshot(
+            CrossRigidPayloadSelectionEntry[] PayloadSelectionEntries,
+            HashSet<string> SelectedPayloadIds,
+            HashSet<string> SelectedRewriteOccurrenceKeys,
+            Dictionary<string, HashSet<string>> SelectedJointCombinationKeys,
+            Dictionary<string, double> SelectedJointCoverageFractions,
+            int SharedFallbackCandidatePlans,
+            int SharedFallbackCompatibleStates,
+            int SharedFallbackAcceptedStates,
+            double SharedFallbackExpectedDraws,
+            double SharedFallbackResidentBytes,
+            int SharedFallbackBudgetRejections,
+            HashSet<string> SharedFallbackAdmittedPlanIds);
+
+        private sealed record CrossRigidDrawCallPortfolioTrial(
+            double Objective,
+            long GeometryBytes,
+            double ResidentBytes,
+            double Delta,
+            CrossRigidExpectedDrawCallEvaluation DrawCallEvaluation,
+            CrossRigidDrawCallPortfolioStateSnapshot State);
+
+        private sealed record CrossRigidPortfolioReplayDetails(
+            HashSet<string> SelectedRewriteConflictKeys,
+            Dictionary<string, string> SelectedJointContextKeyByParentLocation,
+            Dictionary<string, List<CrossRigidRewriteConflictOccurrence>>
+                SelectedOccurrencesByPayload,
+            Dictionary<string, HashSet<string>>
+                SelectedJointCombinationKeysByRewriteOccurrenceKey,
+            CrossRigidPayloadSelectionEntry[] AcceptedEntries);
+
         private static void ApplyCrossRigidExpectedDrawCallIncreaseGate(BatchState state)
         {
             var settings = CrossRigidBudgetSettings.Current;
@@ -16,12 +47,18 @@ namespace Editors.PackOptimizer.Core
             var limit = settings.MaxExpectedDrawCallIncrease;
             var selectedPayloadIds = state.CrossRigidSelectedPayloadIds
                 .ToHashSet(StringComparer.Ordinal);
+            var originallySelectedPayloadIds =
+                selectedPayloadIds.ToHashSet(StringComparer.Ordinal);
             var instanceDrawsSavedByPayload = state.CrossRigidPayloadSelectionEntries
                 .Where(entry => entry.Accepted && selectedPayloadIds.Contains(entry.GeneratedPayloadId))
                 .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
                 .ToDictionary(
                     group => group.Key,
                     group => group.Last().MarginalExpectedArmyDrawCallsEliminated,
+                    StringComparer.Ordinal);
+            var originalInstanceDrawsSavedByPayload =
+                new Dictionary<string, double>(
+                    instanceDrawsSavedByPayload,
                     StringComparer.Ordinal);
             var context = BuildRetirementContext(state);
             var drawCallTerms = BuildCrossRigidExpectedDrawCallTerms(
@@ -42,25 +79,847 @@ namespace Editors.PackOptimizer.Core
             foreach (var payloadId in selection.DroppedPayloadIds)
                 RejectCrossRigidPayloadForDrawCallIncrease(state, payloadId);
 
+            var postPruneSelectedPayloadIds = state.CrossRigidSelectedPayloadIds
+                .ToHashSet(StringComparer.Ordinal);
+            var postPruneEvaluation = EvaluateCrossRigidDrawCallDelta(
+                state,
+                postPruneSelectedPayloadIds,
+                instanceDrawsSavedByPayload,
+                context,
+                drawCallTerms);
+            var postPruneState =
+                CaptureCrossRigidDrawCallPortfolioState(state);
+            var portfolioSearch = OptimizeCrossRigidPortfolioAfterDrawCallGate(
+                state,
+                limit,
+                postPruneEvaluation.Delta,
+                state.CrossRigidDrawCallPortfolioSearchContext);
+
             var finalSelectedPayloadIds = state.CrossRigidSelectedPayloadIds
                 .ToHashSet(StringComparer.Ordinal);
+            instanceDrawsSavedByPayload = state.CrossRigidPayloadSelectionEntries
+                .Where(entry => entry.Accepted && finalSelectedPayloadIds.Contains(entry.GeneratedPayloadId))
+                .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Last().MarginalExpectedArmyDrawCallsEliminated,
+                    StringComparer.Ordinal);
+            context = BuildRetirementContext(state);
+            drawCallTerms = BuildCrossRigidExpectedDrawCallTerms(
+                state,
+                finalSelectedPayloadIds,
+                context);
             var finalEvaluation = EvaluateCrossRigidDrawCallDelta(
                 state,
                 finalSelectedPayloadIds,
                 instanceDrawsSavedByPayload,
                 context,
                 drawCallTerms);
-            var droppedPayloads = selection.DroppedPayloadIds
+            if (double.IsNaN(finalEvaluation.Delta) ||
+                finalEvaluation.Delta >
+                limit + AtlasValueGateExpectedDrawEpsilon)
+            {
+                RestoreCrossRigidDrawCallPortfolioState(state, postPruneState);
+                finalSelectedPayloadIds = state.CrossRigidSelectedPayloadIds
+                    .ToHashSet(StringComparer.Ordinal);
+                context = BuildRetirementContext(state);
+                drawCallTerms = BuildCrossRigidExpectedDrawCallTerms(
+                    state,
+                    finalSelectedPayloadIds,
+                    context);
+                instanceDrawsSavedByPayload = state.CrossRigidPayloadSelectionEntries
+                    .Where(entry => entry.Accepted &&
+                                    finalSelectedPayloadIds.Contains(entry.GeneratedPayloadId))
+                    .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Last().MarginalExpectedArmyDrawCallsEliminated,
+                        StringComparer.Ordinal);
+                finalEvaluation = EvaluateCrossRigidDrawCallDelta(
+                    state,
+                    finalSelectedPayloadIds,
+                    instanceDrawsSavedByPayload,
+                    context,
+                    drawCallTerms);
+                portfolioSearch = portfolioSearch with
+                {
+                    BestObjective = portfolioSearch.IncumbentObjective,
+                    BestDelta = portfolioSearch.IncumbentDelta,
+                    AddedPayloadIds = Array.Empty<string>(),
+                    RemovedPayloadIds = Array.Empty<string>(),
+                };
+            }
+
+            if (double.IsNaN(finalEvaluation.Delta) ||
+                finalEvaluation.Delta >
+                limit + AtlasValueGateExpectedDrawEpsilon)
+            {
+                throw new InvalidOperationException(
+                    "The cross-rigid draw-call gate could not restore a portfolio within its configured limit.");
+            }
+
+            var droppedPayloads = originallySelectedPayloadIds
+                .Except(finalSelectedPayloadIds, StringComparer.Ordinal)
+                .OrderBy(payloadId => payloadId, StringComparer.Ordinal)
                 .Select(payloadId => new CrossRigidExpectedDrawCallDrop(
                     payloadId,
-                    instanceDrawsSavedByPayload.GetValueOrDefault(payloadId)))
+                    instanceDrawsSavedByPayload
+                        .GetValueOrDefault(payloadId,
+                            originalInstanceDrawsSavedByPayload
+                                .GetValueOrDefault(payloadId))))
                 .ToArray();
             state.CrossRigidExpectedDrawCallGateReport =
                 new CrossRigidExpectedDrawCallGateReport(
                     finalEvaluation,
                     limit,
                     droppedPayloads,
-                    selection.InstanceDrawsGivenUp);
+                    droppedPayloads.Sum(drop => drop.InstanceDrawsGivenUp),
+                    portfolioSearch);
+            state.CrossRigidDrawCallPortfolioSearchContext = null;
+        }
+
+        private static CrossRigidExpectedDrawCallPortfolioSearchReport
+            OptimizeCrossRigidPortfolioAfterDrawCallGate(
+                BatchState state,
+                double limit,
+                double incumbentDelta,
+                CrossRigidDrawCallPortfolioSearchContext? searchContext)
+        {
+            const int trialBudget = 64;
+            const int maxReservedSourceRigidCohortTrials = 16;
+            var incumbentIds = state.CrossRigidSelectedPayloadIds
+                .ToHashSet(StringComparer.Ordinal);
+            var incumbentEntries = state.CrossRigidPayloadSelectionEntries
+                .Where(entry => entry.Accepted &&
+                                incumbentIds.Contains(entry.GeneratedPayloadId))
+                .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .Select(group => group.Last())
+                .ToArray();
+            var incumbentObjective = incumbentEntries.Sum(entry =>
+                entry.MarginalExpectedArmyDrawCallsEliminated);
+            var incumbentGeometryBytes = incumbentEntries.Sum(entry =>
+                entry.GeneratedGeometryBytes);
+            var incumbentResidentBytes = incumbentEntries.Sum(entry =>
+                entry.ExpectedResidentGeneratedGeometryBytes);
+            var candidateCount = searchContext?.OrderedCandidates
+                .Select(entry => entry.GeneratedPayloadId)
+                .Distinct(StringComparer.Ordinal)
+                .Count(id => !incumbentIds.Contains(id)) ?? 0;
+
+            if (searchContext == null || double.IsPositiveInfinity(limit))
+            {
+                return new CrossRigidExpectedDrawCallPortfolioSearchReport(
+                    incumbentObjective,
+                    incumbentObjective,
+                    incumbentDelta,
+                    incumbentDelta,
+                    0,
+                    trialBudget,
+                    false,
+                    candidateCount,
+                    0,
+                    Array.Empty<string>(),
+                    Array.Empty<string>());
+            }
+
+            var candidateById = searchContext.OrderedCandidates
+                .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.First(),
+                    StringComparer.Ordinal);
+            var incumbentOrder = state.CrossRigidPayloadSelectionEntries
+                .Where(entry => entry.Accepted &&
+                                incumbentIds.Contains(entry.GeneratedPayloadId))
+                .Select(entry => candidateById.GetValueOrDefault(entry.GeneratedPayloadId))
+                .Where(entry => entry != null)
+                .Cast<CrossRigidPayloadSelectionEntry>()
+                .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToArray();
+            var unselectedCandidates = candidateById.Values
+                .Where(entry => !incumbentIds.Contains(entry.GeneratedPayloadId) &&
+                                !searchContext.InvalidProfiles.Contains(entry.GeneratedPayloadId))
+                .OrderByDescending(entry => entry.ExpectedArmyDrawCallsEliminated)
+                .ThenBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .ToArray();
+            var retirementContext = BuildRetirementContext(state);
+            var stableSources = BuildCrossRigidExpectedDrawCallTerms(
+                state,
+                new HashSet<string>(StringComparer.Ordinal),
+                retirementContext).Sources;
+            var cohortFronts = BuildCrossRigidSourceRigidCompletionCohorts(
+                state,
+                unselectedCandidates,
+                incumbentIds,
+                retirementContext);
+            var cohortProposalCount = cohortFronts.Length * 2;
+            var cohortReservation = Math.Min(
+                maxReservedSourceRigidCohortTrials,
+                cohortProposalCount);
+            var singleTrialCount = Math.Min(
+                unselectedCandidates.Length,
+                trialBudget - cohortReservation);
+            var proposals = new List<(
+                CrossRigidPayloadSelectionEntry[] Front,
+                bool IsCohort,
+                bool IncludeIncumbent)>();
+            foreach (var candidate in unselectedCandidates.Take(singleTrialCount))
+            {
+                proposals.Add((new[] { candidate }, false, true));
+            }
+
+            foreach (var cohort in cohortFronts.Take((trialBudget - proposals.Count) / 2))
+            {
+                proposals.Add((cohort, true, false));
+                proposals.Add((cohort, true, true));
+            }
+
+            var distinctProposals = new List<(
+                CrossRigidPayloadSelectionEntry[] Front,
+                bool IsCohort,
+                bool IncludeIncumbent)>();
+            var seenOrders = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var proposal in proposals)
+            {
+                var promotedIds = proposal.Front
+                    .Select(entry => entry.GeneratedPayloadId)
+                    .ToHashSet(StringComparer.Ordinal);
+                var order = proposal.IncludeIncumbent
+                    ? proposal.Front
+                        .Concat(incumbentOrder.Where(entry =>
+                            !promotedIds.Contains(entry.GeneratedPayloadId)))
+                        .ToArray()
+                    : proposal.Front;
+                var key = string.Concat(order.Select(entry =>
+                    entry.GeneratedPayloadId.Length.ToString(CultureInfo.InvariantCulture) + ":" +
+                    entry.GeneratedPayloadId));
+                if (seenOrders.Add(key))
+                    distinctProposals.Add((order, proposal.IsCohort, proposal.IncludeIncumbent));
+            }
+
+            var bestObjective = incumbentObjective;
+            var bestGeometryBytes = incumbentGeometryBytes;
+            var bestResidentBytes = incumbentResidentBytes;
+            var bestDelta = incumbentDelta;
+            CrossRigidDrawCallPortfolioTrial? bestTrial = null;
+            var trials = 0;
+            var cohortTrials = 0;
+            foreach (var proposal in distinctProposals.Take(trialBudget))
+            {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                trials++;
+                if (proposal.IsCohort)
+                    cohortTrials++;
+
+                var trial = EvaluateCrossRigidPortfolioWithSharedFallbacks(
+                    state,
+                    proposal.Front,
+                    searchContext,
+                    retirementContext,
+                    stableSources);
+                if (trial.Delta > limit)
+                    continue;
+
+                if (!IsBetterCrossRigidDrawCallPortfolioTrial(
+                        trial,
+                        bestObjective,
+                        bestGeometryBytes,
+                        bestResidentBytes))
+                {
+                    continue;
+                }
+
+                bestObjective = trial.Objective;
+                bestGeometryBytes = trial.GeometryBytes;
+                bestResidentBytes = trial.ResidentBytes;
+                bestDelta = trial.Delta;
+                bestTrial = trial;
+            }
+
+            if (bestTrial != null)
+            {
+                ApplyCrossRigidPortfolioTrial(state, bestTrial, incumbentIds);
+            }
+
+            return new CrossRigidExpectedDrawCallPortfolioSearchReport(
+                incumbentObjective,
+                bestObjective,
+                incumbentDelta,
+                bestDelta,
+                trials,
+                trialBudget,
+                unselectedCandidates.Length > singleTrialCount ||
+                cohortProposalCount > trialBudget - singleTrialCount,
+                candidateCount,
+                cohortTrials,
+                state.CrossRigidSelectedPayloadIds
+                    .Except(incumbentIds, StringComparer.Ordinal)
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .ToArray(),
+                incumbentIds
+                    .Except(state.CrossRigidSelectedPayloadIds, StringComparer.Ordinal)
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .ToArray());
+        }
+
+        private static CrossRigidPayloadSelectionEntry[][]
+            BuildCrossRigidSourceRigidCompletionCohorts(
+                BatchState state,
+                IReadOnlyList<CrossRigidPayloadSelectionEntry> candidates,
+                IReadOnlySet<string> incumbentPayloadIds,
+                RetirementContext retirementContext)
+        {
+            var candidateById = candidates
+                .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            var baselineCoverage = BuildCrossRigidDrawCallCoverage(
+                retirementContext,
+                incumbentPayloadIds).Coverage;
+            var candidateCoverageByRigid = new Dictionary<
+                string,
+                Dictionary<string, Dictionary<CrossRigidWsModelOccurrenceKey, double>>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var plan in state.CrossRigidMergeAnalysisEntries)
+            {
+                if (!candidateById.ContainsKey(plan.GeneratedPayloadId))
+                    continue;
+
+                foreach (var rigid in plan.SourceGeometry
+                             .Select(source => Normalize(source.RigidPath))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!candidateCoverageByRigid.TryGetValue(rigid, out var byPayload))
+                    {
+                        byPayload = new Dictionary<
+                            string,
+                            Dictionary<CrossRigidWsModelOccurrenceKey, double>>(
+                            StringComparer.Ordinal);
+                        candidateCoverageByRigid[rigid] = byPayload;
+                    }
+
+                    if (!byPayload.TryGetValue(plan.GeneratedPayloadId, out var coverageByOccurrence))
+                    {
+                        coverageByOccurrence = new Dictionary<
+                            CrossRigidWsModelOccurrenceKey,
+                            double>();
+                        byPayload[plan.GeneratedPayloadId] = coverageByOccurrence;
+                    }
+
+                    foreach (var set in plan.RewriteOccurrenceSets)
+                    {
+                        foreach (var instance in set.SourceInstances.Distinct())
+                        {
+                            if (!retirementContext.RigidsOfWs.TryGetValue(
+                                    Normalize(instance.WsModelPath),
+                                    out var sourceRigids) ||
+                                !sourceRigids.Contains(rigid))
+                            {
+                                continue;
+                            }
+
+                            var occurrenceKey = new CrossRigidWsModelOccurrenceKey(
+                                Normalize(plan.VmdPath),
+                                instance.AttachmentIdentity,
+                                Normalize(instance.WsModelPath));
+                            if (!state.CrossRigidWsModelOccurrenceProbabilities.ContainsKey(
+                                    occurrenceKey))
+                            {
+                                continue;
+                            }
+
+                            coverageByOccurrence[occurrenceKey] = Math.Min(
+                                1.0,
+                                coverageByOccurrence.GetValueOrDefault(occurrenceKey) +
+                                set.Probability);
+                        }
+                    }
+                }
+            }
+
+            var cohorts = new List<(string RigidPath, CrossRigidPayloadSelectionEntry[] Candidates)>();
+            foreach (var (rigid, candidateCoverage) in candidateCoverageByRigid
+                         .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var targetCoverage = state.CrossRigidWsModelOccurrenceProbabilities
+                    .Where(pair => retirementContext.RigidsOfWs.TryGetValue(
+                                       Normalize(pair.Key.WsModelPath),
+                                       out var sourceRigids) &&
+                                   sourceRigids.Contains(rigid))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value);
+                if (targetCoverage.Count == 0)
+                    continue;
+
+                var remaining = new Dictionary<CrossRigidWsModelOccurrenceKey, double>();
+                foreach (var (occurrenceKey, targetProbability) in targetCoverage)
+                {
+                    var alreadyCovered = Math.Min(
+                        targetProbability,
+                        baselineCoverage.GetValueOrDefault(occurrenceKey));
+                    var uncovered = targetProbability - alreadyCovered;
+                    if (uncovered > AtlasValueGateExpectedDrawEpsilon)
+                        remaining[occurrenceKey] = uncovered;
+                }
+
+                if (remaining.Count == 0)
+                    continue;
+
+                var chosen = new List<CrossRigidPayloadSelectionEntry>();
+                var chosenIds = new HashSet<string>(StringComparer.Ordinal);
+                while (remaining.Count != 0 && chosen.Count < 8)
+                {
+                    CrossRigidPayloadSelectionEntry? bestCandidate = null;
+                    double bestGain = 0;
+                    foreach (var (payloadId, coverageByOccurrence) in candidateCoverage)
+                    {
+                        if (incumbentPayloadIds.Contains(payloadId) ||
+                            chosenIds.Contains(payloadId) ||
+                            !candidateById.TryGetValue(payloadId, out var candidate))
+                        {
+                            continue;
+                        }
+
+                        var gain = remaining.Sum(item => Math.Min(
+                            item.Value,
+                            coverageByOccurrence.GetValueOrDefault(item.Key)));
+                        if (gain > bestGain + AtlasValueGateExpectedDrawEpsilon ||
+                            (Math.Abs(gain - bestGain) <= AtlasValueGateExpectedDrawEpsilon &&
+                             gain > AtlasValueGateExpectedDrawEpsilon &&
+                             (bestCandidate == null ||
+                              candidate.ExpectedArmyDrawCallsEliminated >
+                                  bestCandidate.ExpectedArmyDrawCallsEliminated +
+                                  AtlasValueGateExpectedDrawEpsilon ||
+                              (Math.Abs(candidate.ExpectedArmyDrawCallsEliminated -
+                                        bestCandidate.ExpectedArmyDrawCallsEliminated) <=
+                               AtlasValueGateExpectedDrawEpsilon &&
+                               string.CompareOrdinal(
+                                   candidate.GeneratedPayloadId,
+                                   bestCandidate.GeneratedPayloadId) < 0))))
+                        {
+                            bestGain = gain;
+                            bestCandidate = candidate;
+                        }
+                    }
+
+                    if (bestCandidate == null ||
+                        bestGain <= AtlasValueGateExpectedDrawEpsilon)
+                    {
+                        break;
+                    }
+
+                    chosen.Add(bestCandidate);
+                    chosenIds.Add(bestCandidate.GeneratedPayloadId);
+                    var chosenCoverage = candidateCoverage[
+                        bestCandidate.GeneratedPayloadId];
+                    foreach (var occurrenceKey in remaining.Keys.ToArray())
+                    {
+                        var uncovered = remaining[occurrenceKey] -
+                                        chosenCoverage.GetValueOrDefault(occurrenceKey);
+                        if (uncovered <= AtlasValueGateExpectedDrawEpsilon)
+                            remaining.Remove(occurrenceKey);
+                        else
+                            remaining[occurrenceKey] = uncovered;
+                    }
+                }
+
+                // A partial prefix is only a seed, not a completion cohort.
+                if (remaining.Count == 0 && chosen.Count >= 2)
+                {
+                    cohorts.Add((rigid, chosen.ToArray()));
+                }
+            }
+
+            return cohorts
+                .OrderByDescending(cohort => cohort.Candidates.Sum(candidate =>
+                    candidate.ExpectedArmyDrawCallsEliminated))
+                .ThenBy(cohort => cohort.RigidPath, StringComparer.OrdinalIgnoreCase)
+                .Select(cohort => cohort.Candidates)
+                .ToArray();
+        }
+
+        private static bool IsBetterCrossRigidDrawCallPortfolioTrial(
+            CrossRigidDrawCallPortfolioTrial candidate,
+            double currentObjective,
+            long currentGeometryBytes,
+            double currentResidentBytes)
+        {
+            if (candidate.Objective >
+                currentObjective + AtlasValueGateExpectedDrawEpsilon)
+            {
+                return true;
+            }
+
+            if (Math.Abs(candidate.Objective - currentObjective) >
+                AtlasValueGateExpectedDrawEpsilon)
+            {
+                return false;
+            }
+
+            return candidate.ResidentBytes <
+                       currentResidentBytes - AtlasValueGateExpectedDrawEpsilon ||
+                   (Math.Abs(candidate.ResidentBytes - currentResidentBytes) <=
+                    AtlasValueGateExpectedDrawEpsilon &&
+                    candidate.GeometryBytes < currentGeometryBytes);
+        }
+
+        private static CrossRigidDrawCallPortfolioTrial
+            EvaluateCrossRigidPortfolioWithSharedFallbacks(
+                BatchState state,
+                IReadOnlyList<CrossRigidPayloadSelectionEntry> orderedCandidates,
+                CrossRigidDrawCallPortfolioSearchContext searchContext,
+                RetirementContext retirementContext,
+                IReadOnlyList<(string RigidPath, double ExpectedMeshParts)> stableSources)
+        {
+            var originalState = CaptureCrossRigidDrawCallPortfolioState(state);
+            try
+            {
+                var portfolio = EvaluateCrossRigidPayloadPortfolio(
+                    state,
+                    orderedCandidates,
+                    searchContext.ConflictProfiles,
+                    searchContext.InvalidProfiles,
+                    searchContext.SourceVmdDocuments);
+                var details = BuildCrossRigidPortfolioReplayDetails(
+                    state,
+                    orderedCandidates,
+                    portfolio.SelectedPayloadIds,
+                    searchContext);
+                ApplyCrossRigidPortfolioReplayDetailsToState(
+                    state,
+                    portfolio.SelectedPayloadIds,
+                    details,
+                    searchContext.ConflictProfiles);
+
+                var selectedRewriteConflictOwnerByKey =
+                    new Dictionary<string, CrossRigidSelectedRewriteConflictOwner>(
+                        StringComparer.Ordinal);
+                var selectedJointContextOwnerByParentLocation =
+                    new Dictionary<string, CrossRigidSelectedRewriteConflictOwner>(
+                        StringComparer.Ordinal);
+                foreach (var (payloadId, occurrences) in details.SelectedOccurrencesByPayload)
+                {
+                    var candidate = details.AcceptedEntries.First(entry =>
+                        entry.GeneratedPayloadId.Equals(payloadId, StringComparison.Ordinal));
+                    foreach (var occurrence in occurrences)
+                    {
+                        var owner = new CrossRigidSelectedRewriteConflictOwner(
+                            payloadId,
+                            occurrence.SelectionKey,
+                            occurrence.ExpectedArmyDrawCallsEliminated,
+                            candidate.MaxRawDrawsSavedPerState,
+                            candidate.GeneratedGeometryBytes,
+                            candidate.SelectionRank);
+                        foreach (var key in occurrence.RewriteConflictKeys)
+                            selectedRewriteConflictOwnerByKey.TryAdd(key, owner);
+                        foreach (var pair in occurrence.JointContextKeyByParentLocation)
+                            selectedJointContextOwnerByParentLocation[pair.Key] = owner;
+                    }
+                }
+
+                var acceptedExpectedDraws = portfolio.ExpectedDraws;
+                var acceptedExpectedResidentGeometryBytes = portfolio.ResidentBytes;
+                ResetCrossRigidSharedPayloadFallbackState(state);
+                AdmitCrossRigidSharedPayloadFallbacks(
+                    state,
+                    searchContext.PrimaryPlansByPayload,
+                    searchContext.PlansByPayload,
+                    details.SelectedRewriteConflictKeys,
+                    selectedRewriteConflictOwnerByKey,
+                    details.SelectedJointContextKeyByParentLocation,
+                    selectedJointContextOwnerByParentLocation,
+                    searchContext.SourceVmdDocuments,
+                    ref acceptedExpectedDraws,
+                    ref acceptedExpectedResidentGeometryBytes,
+                    reportDiagnostics: false);
+
+                var selectedPayloadIds = state.CrossRigidSelectedPayloadIds
+                    .ToHashSet(StringComparer.Ordinal);
+                var drawCallTerms = BuildCrossRigidExpectedDrawCallTerms(
+                    state,
+                    selectedPayloadIds,
+                    retirementContext,
+                    stableSources);
+                var exactCoverage = BuildCrossRigidDrawCallCoverageFromSelectedOccurrences(
+                    retirementContext,
+                    selectedPayloadIds);
+                var drawCallEvaluation = EvaluateCrossRigidDrawCallTotals(
+                    state,
+                    selectedPayloadIds,
+                    retirementContext,
+                    drawCallTerms,
+                    exactCoverage);
+                var acceptedEntries = state.CrossRigidPayloadSelectionEntries
+                    .Where(entry => entry.Accepted &&
+                                    selectedPayloadIds.Contains(entry.GeneratedPayloadId))
+                    .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                    .Select(group => group.Last())
+                    .ToArray();
+                var trialState = CaptureCrossRigidDrawCallPortfolioState(state);
+                return new CrossRigidDrawCallPortfolioTrial(
+                    acceptedEntries.Sum(entry =>
+                        entry.MarginalExpectedArmyDrawCallsEliminated),
+                    acceptedEntries.Sum(entry => entry.GeneratedGeometryBytes),
+                    acceptedEntries.Sum(entry =>
+                        entry.ExpectedResidentGeneratedGeometryBytes),
+                    drawCallEvaluation.Delta,
+                    drawCallEvaluation,
+                    trialState);
+            }
+            finally
+            {
+                RestoreCrossRigidDrawCallPortfolioState(state, originalState);
+            }
+        }
+
+        private static CrossRigidPortfolioReplayDetails
+            BuildCrossRigidPortfolioReplayDetails(
+                BatchState state,
+                IReadOnlyList<CrossRigidPayloadSelectionEntry> orderedCandidates,
+                IReadOnlySet<string> selectedPayloadIds,
+                CrossRigidDrawCallPortfolioSearchContext searchContext)
+        {
+            var selectedRewriteConflictKeys = new HashSet<string>(StringComparer.Ordinal);
+            var selectedJointContexts = new Dictionary<string, string>(StringComparer.Ordinal);
+            var selectedOccurrencesByPayload = new Dictionary<
+                string,
+                List<CrossRigidRewriteConflictOccurrence>>(StringComparer.Ordinal);
+            var jointCombinationKeysByOccurrence = new Dictionary<
+                string,
+                HashSet<string>>(StringComparer.Ordinal);
+            var acceptedEntries = new List<CrossRigidPayloadSelectionEntry>();
+            var seenPayloads = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var candidate in orderedCandidates)
+            {
+                var payloadId = candidate.GeneratedPayloadId;
+                if (!selectedPayloadIds.Contains(payloadId) ||
+                    !seenPayloads.Add(payloadId) ||
+                    !searchContext.ConflictProfiles.TryGetValue(payloadId, out var profile))
+                {
+                    continue;
+                }
+
+                var occurrences = SelectCrossRigidCompatibleRewriteOccurrences(
+                    profile,
+                    selectedRewriteConflictKeys,
+                    selectedJointContexts);
+                var marginalExpectedDraws = occurrences.Sum(occurrence =>
+                    occurrence.ExpectedArmyDrawCallsEliminated);
+                var effectiveCandidate = candidate with
+                {
+                    Decision = CrossRigidPayloadSelectionDecision.Accept,
+                    MarginalExpectedArmyDrawCallsEliminated = marginalExpectedDraws,
+                    PhysicalBytesPerExpectedDraw = marginalExpectedDraws >
+                            AtlasValueGateExpectedDrawEpsilon
+                        ? candidate.GeneratedGeometryBytes / marginalExpectedDraws
+                        : double.PositiveInfinity,
+                    ResidentBytesPerExpectedDraw = marginalExpectedDraws >
+                            AtlasValueGateExpectedDrawEpsilon
+                        ? candidate.ExpectedResidentGeneratedGeometryBytes / marginalExpectedDraws
+                        : double.PositiveInfinity,
+                };
+                acceptedEntries.Add(effectiveCandidate);
+                selectedOccurrencesByPayload[payloadId] = occurrences.ToList();
+                foreach (var occurrence in occurrences)
+                {
+                    selectedRewriteConflictKeys.UnionWith(occurrence.RewriteConflictKeys);
+                    foreach (var context in occurrence.JointContextKeyByParentLocation)
+                        selectedJointContexts[context.Key] = context.Value;
+                    if (string.IsNullOrWhiteSpace(occurrence.JointCombinationKey))
+                        continue;
+                    if (!jointCombinationKeysByOccurrence.TryGetValue(
+                            occurrence.RewriteOccurrenceKey,
+                            out var combinationKeys))
+                    {
+                        combinationKeys = new HashSet<string>(StringComparer.Ordinal);
+                        jointCombinationKeysByOccurrence[occurrence.RewriteOccurrenceKey] =
+                            combinationKeys;
+                    }
+
+                    combinationKeys.Add(occurrence.JointCombinationKey);
+                }
+            }
+
+            return new CrossRigidPortfolioReplayDetails(
+                selectedRewriteConflictKeys,
+                selectedJointContexts,
+                selectedOccurrencesByPayload,
+                jointCombinationKeysByOccurrence,
+                acceptedEntries.ToArray());
+        }
+
+        private static void ApplyCrossRigidPortfolioReplayDetailsToState(
+            BatchState state,
+            IReadOnlySet<string> selectedPayloadIds,
+            CrossRigidPortfolioReplayDetails details,
+            IReadOnlyDictionary<string, CrossRigidPayloadRewriteConflictProfile> conflictProfiles)
+        {
+            state.CrossRigidPayloadSelectionEntries.Clear();
+            state.CrossRigidPayloadSelectionEntries.AddRange(details.AcceptedEntries);
+            state.CrossRigidSelectedPayloadIds.Clear();
+            state.CrossRigidSelectedPayloadIds.UnionWith(selectedPayloadIds);
+            state.CrossRigidSelectedRewriteOccurrenceKeys.Clear();
+            state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey.Clear();
+            state.CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey.Clear();
+            foreach (var occurrences in details.SelectedOccurrencesByPayload.Values)
+            {
+                foreach (var occurrence in occurrences)
+                    state.CrossRigidSelectedRewriteOccurrenceKeys.Add(
+                        occurrence.RewriteOccurrenceKey);
+            }
+
+            foreach (var (rewriteOccurrenceKey, combinationKeys) in
+                     details.SelectedJointCombinationKeysByRewriteOccurrenceKey)
+            {
+                state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey[
+                    rewriteOccurrenceKey] = new HashSet<string>(
+                        combinationKeys,
+                        StringComparer.Ordinal);
+            }
+
+            foreach (var payloadId in selectedPayloadIds)
+            {
+                if (conflictProfiles.TryGetValue(payloadId, out var profile))
+                    UpdateCrossRigidSelectedJointCombinationCoverage(state, profile);
+            }
+        }
+
+        private static void ResetCrossRigidSharedPayloadFallbackState(BatchState state)
+        {
+            state.CrossRigidSharedPayloadFallbackCandidatePlans = 0;
+            state.CrossRigidSharedPayloadFallbackCompatibleStates = 0;
+            state.CrossRigidSharedPayloadFallbackAcceptedStates = 0;
+            state.CrossRigidSharedPayloadFallbackExpectedDraws = 0;
+            state.CrossRigidSharedPayloadFallbackResidentBytes = 0;
+            state.CrossRigidSharedPayloadFallbackBudgetRejections = 0;
+            state.CrossRigidSharedPayloadFallbackAdmittedPlanIds.Clear();
+        }
+
+        private static CrossRigidDrawCallPortfolioStateSnapshot
+            CaptureCrossRigidDrawCallPortfolioState(BatchState state)
+        {
+            var jointCombinationKeys = new Dictionary<string, HashSet<string>>(
+                StringComparer.Ordinal);
+            foreach (var (rewriteOccurrenceKey, combinationKeys) in
+                     state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey)
+            {
+                jointCombinationKeys[rewriteOccurrenceKey] = new HashSet<string>(
+                    combinationKeys,
+                    StringComparer.Ordinal);
+            }
+
+            return new CrossRigidDrawCallPortfolioStateSnapshot(
+                state.CrossRigidPayloadSelectionEntries.ToArray(),
+                state.CrossRigidSelectedPayloadIds.ToHashSet(StringComparer.Ordinal),
+                state.CrossRigidSelectedRewriteOccurrenceKeys.ToHashSet(StringComparer.Ordinal),
+                jointCombinationKeys,
+                new Dictionary<string, double>(
+                    state.CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey,
+                    StringComparer.Ordinal),
+                state.CrossRigidSharedPayloadFallbackCandidatePlans,
+                state.CrossRigidSharedPayloadFallbackCompatibleStates,
+                state.CrossRigidSharedPayloadFallbackAcceptedStates,
+                state.CrossRigidSharedPayloadFallbackExpectedDraws,
+                state.CrossRigidSharedPayloadFallbackResidentBytes,
+                state.CrossRigidSharedPayloadFallbackBudgetRejections,
+                state.CrossRigidSharedPayloadFallbackAdmittedPlanIds
+                    .ToHashSet(StringComparer.Ordinal));
+        }
+
+        private static void RestoreCrossRigidDrawCallPortfolioState(
+            BatchState state,
+            CrossRigidDrawCallPortfolioStateSnapshot snapshot)
+        {
+            state.CrossRigidPayloadSelectionEntries.Clear();
+            state.CrossRigidPayloadSelectionEntries.AddRange(snapshot.PayloadSelectionEntries);
+            state.CrossRigidSelectedPayloadIds.Clear();
+            state.CrossRigidSelectedPayloadIds.UnionWith(snapshot.SelectedPayloadIds);
+            state.CrossRigidSelectedRewriteOccurrenceKeys.Clear();
+            state.CrossRigidSelectedRewriteOccurrenceKeys.UnionWith(
+                snapshot.SelectedRewriteOccurrenceKeys);
+            state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey.Clear();
+            foreach (var (rewriteOccurrenceKey, combinationKeys) in
+                     snapshot.SelectedJointCombinationKeys)
+            {
+                state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey[
+                    rewriteOccurrenceKey] = new HashSet<string>(
+                        combinationKeys,
+                        StringComparer.Ordinal);
+            }
+
+            state.CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey.Clear();
+            foreach (var (rewriteOccurrenceKey, coverageFraction) in
+                     snapshot.SelectedJointCoverageFractions)
+            {
+                state.CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey[
+                    rewriteOccurrenceKey] = coverageFraction;
+            }
+
+            state.CrossRigidSharedPayloadFallbackCandidatePlans =
+                snapshot.SharedFallbackCandidatePlans;
+            state.CrossRigidSharedPayloadFallbackCompatibleStates =
+                snapshot.SharedFallbackCompatibleStates;
+            state.CrossRigidSharedPayloadFallbackAcceptedStates =
+                snapshot.SharedFallbackAcceptedStates;
+            state.CrossRigidSharedPayloadFallbackExpectedDraws =
+                snapshot.SharedFallbackExpectedDraws;
+            state.CrossRigidSharedPayloadFallbackResidentBytes =
+                snapshot.SharedFallbackResidentBytes;
+            state.CrossRigidSharedPayloadFallbackBudgetRejections =
+                snapshot.SharedFallbackBudgetRejections;
+            state.CrossRigidSharedPayloadFallbackAdmittedPlanIds.Clear();
+            state.CrossRigidSharedPayloadFallbackAdmittedPlanIds.UnionWith(
+                snapshot.SharedFallbackAdmittedPlanIds);
+        }
+
+        private static void ApplyCrossRigidPortfolioTrial(
+            BatchState state,
+            CrossRigidDrawCallPortfolioTrial trial,
+            IReadOnlySet<string> incumbentPayloadIds)
+        {
+            var previousEntries = state.CrossRigidPayloadSelectionEntries.ToArray();
+            var acceptedById = trial.State.PayloadSelectionEntries
+                .Where(entry => entry.Accepted)
+                .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+            RestoreCrossRigidDrawCallPortfolioState(state, trial.State);
+
+            var updatedEntries = new List<CrossRigidPayloadSelectionEntry>();
+            var writtenIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in previousEntries)
+            {
+                if (acceptedById.TryGetValue(entry.GeneratedPayloadId, out var accepted))
+                {
+                    if (writtenIds.Add(entry.GeneratedPayloadId))
+                        updatedEntries.Add(accepted);
+                    continue;
+                }
+
+                if (entry.Accepted && incumbentPayloadIds.Contains(entry.GeneratedPayloadId))
+                {
+                    updatedEntries.Add(entry with
+                    {
+                        Decision = CrossRigidPayloadSelectionDecision.RejectedPortfolioSearch,
+                        MarginalExpectedArmyDrawCallsEliminated = 0,
+                        PhysicalBytesPerExpectedDraw = double.PositiveInfinity,
+                        ResidentBytesPerExpectedDraw = double.PositiveInfinity,
+                    });
+                }
+                else
+                {
+                    updatedEntries.Add(entry);
+                }
+            }
+
+            foreach (var accepted in acceptedById.Values
+                         .OrderBy(entry => entry.SelectionRank)
+                         .ThenBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal))
+            {
+                if (writtenIds.Add(accepted.GeneratedPayloadId))
+                    updatedEntries.Add(accepted);
+            }
+
+            state.CrossRigidPayloadSelectionEntries.Clear();
+            state.CrossRigidPayloadSelectionEntries.AddRange(updatedEntries);
         }
 
         private static void RejectCrossRigidPayloadForDrawCallIncrease(
@@ -151,7 +1010,8 @@ namespace Editors.PackOptimizer.Core
             BatchState state,
             IReadOnlySet<string> selectedPayloadIds,
             RetirementContext context,
-            CrossRigidExpectedDrawCallTerms drawCallTerms)
+            CrossRigidExpectedDrawCallTerms drawCallTerms,
+            RetirementCoverage? selectedCoverage = null)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
             if (state.ArmyResidencyModel == null)
@@ -164,7 +1024,8 @@ namespace Editors.PackOptimizer.Core
                     Array.Empty<CrossRigidExpectedDrawCallSourceDelta>());
             }
 
-            var coverage = BuildCrossRigidDrawCallCoverage(context, selectedPayloadIds);
+            var coverage = selectedCoverage ??
+                BuildCrossRigidDrawCallCoverage(context, selectedPayloadIds);
             var retirement = EvaluateCrossRigidDrawCallRetirement(context, coverage);
             var sources = new List<CrossRigidExpectedDrawCallSourceDelta>();
             double before = 0;
@@ -204,7 +1065,8 @@ namespace Editors.PackOptimizer.Core
         private static CrossRigidExpectedDrawCallTerms BuildCrossRigidExpectedDrawCallTerms(
             BatchState state,
             IReadOnlySet<string> initiallySelectedPayloadIds,
-            RetirementContext context)
+            RetirementContext context,
+            IReadOnlyList<(string RigidPath, double ExpectedMeshParts)>? sourcesOverride = null)
         {
             if (state.ArmyResidencyModel == null)
             {
@@ -246,7 +1108,7 @@ namespace Editors.PackOptimizer.Core
                     probability * expectedMeshParts;
             }
 
-            var sources = context.PlansByPayload.Values
+            var sources = sourcesOverride ?? context.PlansByPayload.Values
                 .SelectMany(payloadPlans => payloadPlans)
                 .SelectMany(plan => plan.SourceGeometry)
                 .GroupBy(
@@ -292,6 +1154,62 @@ namespace Editors.PackOptimizer.Core
             return new RetirementCoverage
             {
                 Name = "DRAW CALL GATE",
+                Coverage = coverage,
+                VmdsWithPlans = vmdsWithPlans,
+            };
+        }
+
+        private static RetirementCoverage
+            BuildCrossRigidDrawCallCoverageFromSelectedOccurrences(
+                RetirementContext context,
+                IReadOnlySet<string> selectedPayloadIds)
+        {
+            var state = context.State;
+            var coverage = new Dictionary<CrossRigidWsModelOccurrenceKey, double>();
+            var vmdsWithPlans = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var payloadId in selectedPayloadIds)
+            {
+                if (!context.PlansByPayload.TryGetValue(payloadId, out var plans))
+                    continue;
+
+                foreach (var plan in plans)
+                {
+                    foreach (var set in plan.RewriteOccurrenceSets)
+                    {
+                        var occurrenceKey = BuildCrossRigidSelectedRewriteOccurrenceKey(plan, set);
+                        if (!state.CrossRigidSelectedRewriteOccurrenceKeys.Contains(occurrenceKey))
+                            continue;
+
+                        var jointCoverageFraction = state
+                            .CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey
+                            .GetValueOrDefault(
+                                occurrenceKey,
+                                state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey
+                                    .ContainsKey(occurrenceKey)
+                                    ? 0
+                                    : 1);
+                        if (jointCoverageFraction <= 0)
+                            continue;
+
+                        var contribution = set.Probability * jointCoverageFraction;
+                        foreach (var instance in set.SourceInstances.Distinct())
+                        {
+                            var key = new CrossRigidWsModelOccurrenceKey(
+                                plan.VmdPath,
+                                instance.AttachmentIdentity,
+                                instance.WsModelPath);
+                            coverage[key] = Math.Min(
+                                1.0,
+                                coverage.GetValueOrDefault(key) + contribution);
+                            vmdsWithPlans.Add(plan.VmdPath);
+                        }
+                    }
+                }
+            }
+
+            return new RetirementCoverage
+            {
+                Name = "DRAW CALL GATE PORTFOLIO TRIAL",
                 Coverage = coverage,
                 VmdsWithPlans = vmdsWithPlans,
             };
@@ -465,6 +1383,23 @@ namespace Editors.PackOptimizer.Core
             sb.AppendLine(
                 $"Payloads dropped by the gate: {report.DroppedPayloads.Length:N0}; " +
                 $"instance draws given up: {FormatExpectedDrawCallNumber(report.InstanceDrawsGivenUp)}");
+            var portfolioSearch = report.PortfolioSearch;
+            sb.AppendLine(
+                $"Post-gate portfolio search: incumbent objective={FormatExpectedDrawCallNumber(portfolioSearch.IncumbentObjective)}, " +
+                $"best objective={FormatExpectedDrawCallNumber(portfolioSearch.BestObjective)}, " +
+                $"modeled Δ={FormatExpectedDrawCallNumber(portfolioSearch.IncumbentDelta)} -> " +
+                $"{FormatExpectedDrawCallNumber(portfolioSearch.BestDelta)}; " +
+                $"trials={portfolioSearch.Trials:N0}/{portfolioSearch.TrialBudget:N0}, " +
+                $"budget exhausted={(portfolioSearch.BudgetExhausted ? "yes" : "no")}, " +
+                $"unselected candidates={portfolioSearch.CandidateCount:N0}, " +
+                $"source-rigid cohorts tried={portfolioSearch.CohortTrials:N0}");
+            if (portfolioSearch.AddedPayloadIds.Length != 0 ||
+                portfolioSearch.RemovedPayloadIds.Length != 0)
+            {
+                sb.AppendLine(
+                    $"Portfolio search changes: added={portfolioSearch.AddedPayloadIds.Length:N0}, " +
+                    $"removed={portfolioSearch.RemovedPayloadIds.Length:N0}");
+            }
             foreach (var dropped in report.DroppedPayloads)
             {
                 sb.AppendLine(

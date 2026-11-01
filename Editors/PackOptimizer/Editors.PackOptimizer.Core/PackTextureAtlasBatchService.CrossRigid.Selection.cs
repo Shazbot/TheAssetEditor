@@ -27,6 +27,14 @@ namespace Editors.PackOptimizer.Core
 {
     public sealed partial class PackTextureAtlasBatchService
     {
+        private sealed record CrossRigidDrawCallPortfolioSearchContext(
+            IReadOnlyList<CrossRigidPayloadSelectionEntry> OrderedCandidates,
+            Dictionary<string, CrossRigidPayloadRewriteConflictProfile> ConflictProfiles,
+            HashSet<string> InvalidProfiles,
+            Dictionary<string, XmlDocument> SourceVmdDocuments,
+            IReadOnlyDictionary<string, CrossRigidMergeAnalysisEntry[]> PrimaryPlansByPayload,
+            IReadOnlyDictionary<string, CrossRigidMergeAnalysisEntry[]> PlansByPayload);
+
         private static void SelectCrossRigidGeneratedPayloads(
             BatchState state)
         {
@@ -240,6 +248,8 @@ namespace Editors.PackOptimizer.Core
                     string,
                     CrossRigidPayloadRewriteConflictProfile>(
                     StringComparer.Ordinal);
+            var invalidProfiles =
+                new HashSet<string>(StringComparer.Ordinal);
             var selectedRewriteConflictKeys =
                 new HashSet<string>(StringComparer.Ordinal);
             var selectedRewriteConflictOwnerByKey =
@@ -265,6 +275,7 @@ namespace Editors.PackOptimizer.Core
                     state,
                     orderedCandidates,
                     conflictProfiles,
+                    invalidProfiles,
                     conflictProfileVmdDocuments);
             state.CrossRigidTimingDetails["Analyze: portfolio ordering search"] =
                 portfolioSearchTimer.Elapsed;
@@ -646,6 +657,14 @@ namespace Editors.PackOptimizer.Core
                 conflictProfileVmdDocuments,
                 ref acceptedExpectedDraws,
                 ref acceptedExpectedResidentGeometryBytes);
+            state.CrossRigidDrawCallPortfolioSearchContext =
+                new CrossRigidDrawCallPortfolioSearchContext(
+                    orderedCandidates,
+                    conflictProfiles,
+                    invalidProfiles,
+                    conflictProfileVmdDocuments,
+                    primaryPlansByPayload,
+                    plansByPayload);
         }
 
         private static void AdmitCrossRigidSharedPayloadFallbacks(
@@ -663,7 +682,8 @@ namespace Editors.PackOptimizer.Core
                 selectedJointContextOwnerByParentLocation,
             Dictionary<string, XmlDocument> sourceVmdDocuments,
             ref double acceptedExpectedDraws,
-            ref double acceptedExpectedResidentGeometryBytes)
+              ref double acceptedExpectedResidentGeometryBytes,
+              bool reportDiagnostics = true)
         {
             // A payload with no accepted primary still has to pay for its
             // geometry through the existing fallback-only selection stage.
@@ -699,10 +719,13 @@ namespace Editors.PackOptimizer.Core
                         out var profileReason,
                         onlySupplementaryPairFallbackPlans: true))
                 {
-                    RecordCrossRigidAnalysisDiagnostic(
-                        state,
-                        "Shared-payload fallback profile unavailable",
-                        $"payload={payloadId}: {profileReason}");
+                      if (reportDiagnostics)
+                      {
+                          RecordCrossRigidAnalysisDiagnostic(
+                              state,
+                              "Shared-payload fallback profile unavailable",
+                              $"payload={payloadId}: {profileReason}");
+                      }
                     continue;
                 }
 
@@ -872,6 +895,7 @@ namespace Editors.PackOptimizer.Core
                 IReadOnlyList<CrossRigidPayloadSelectionEntry> candidates,
                 Dictionary<string, CrossRigidPayloadRewriteConflictProfile>
                     conflictProfiles,
+                  HashSet<string> invalidProfiles,
                 Dictionary<string, XmlDocument> sourceVmdDocuments)
         {
             // Keep the original full-group portfolio intact before
@@ -934,8 +958,6 @@ namespace Editors.PackOptimizer.Core
                         StringComparer.Ordinal)
                     .ToArray();
 
-            var invalidProfiles =
-                new HashSet<string>(StringComparer.Ordinal);
             var bestOrder = rawDrawOrder;
             var best =
                 EvaluateCrossRigidPayloadPortfolio(

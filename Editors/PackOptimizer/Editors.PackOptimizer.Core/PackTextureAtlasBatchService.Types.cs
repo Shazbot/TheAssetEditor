@@ -414,7 +414,21 @@ namespace Editors.PackOptimizer.Core
             CrossRigidExpectedDrawCallEvaluation Evaluation,
             double Limit,
             CrossRigidExpectedDrawCallDrop[] DroppedPayloads,
-            double InstanceDrawsGivenUp);
+            double InstanceDrawsGivenUp,
+            CrossRigidExpectedDrawCallPortfolioSearchReport PortfolioSearch);
+
+        private sealed record CrossRigidExpectedDrawCallPortfolioSearchReport(
+            double IncumbentObjective,
+            double BestObjective,
+            double IncumbentDelta,
+            double BestDelta,
+            int Trials,
+            int TrialBudget,
+            bool BudgetExhausted,
+            int CandidateCount,
+            int CohortTrials,
+            string[] AddedPayloadIds,
+            string[] RemovedPayloadIds);
 
         private sealed record CrossRigidGeneratedSourcePart(
             int InstanceIndex,
@@ -548,6 +562,7 @@ namespace Editors.PackOptimizer.Core
             PerPayloadPhysicalCostCeilingExceeded,
             PerPayloadResidentCostCeilingExceeded,
             RejectedDrawCallIncrease,
+            RejectedPortfolioSearch,
         }
 
         private sealed record CrossRigidPayloadSelectionEntry(
@@ -764,6 +779,8 @@ namespace Editors.PackOptimizer.Core
                 CrossRigidPayloadSelectionEntries { get; } = [];
             public CrossRigidExpectedDrawCallGateReport?
                 CrossRigidExpectedDrawCallGateReport { get; set; }
+            public CrossRigidDrawCallPortfolioSearchContext?
+                CrossRigidDrawCallPortfolioSearchContext { get; set; }
             public HashSet<string> CrossRigidSelectedPayloadIds { get; } =
                 new(StringComparer.Ordinal);
             public HashSet<string> CrossRigidSelectedRewriteOccurrenceKeys { get; } =
