@@ -5697,6 +5697,13 @@ namespace Test.PackOptimizer.Core
                    "</textures></material>";
         }
 
+        private static string DownscaleMaterialXmlWithShader(
+            string shader,
+            params (string Slot, string Texture)[] textures)
+            => DownscaleMaterialXml(textures).Replace(
+                "<shader>shaders\\weighted2_character.xml.shader</shader>",
+                $"<shader>{shader}</shader>");
+
         private static RmvModel CreateDensityPart(double uvPerWorld)
         {
             var scale = (float)uvPerWorld;
@@ -6013,6 +6020,137 @@ namespace Test.PackOptimizer.Core
                 Candidates(result).Select(candidate => Get<string>(candidate, "Path")),
                 Does.Not.Contain("textures\\t_half.dds"));
             Assert.That(Reasons(result)[DownscaleReason("TextureDownscaleReasonNoUser")], Is.EqualTo(2));
+        }
+
+        [Test]
+        public void Downscale_UnreadSecondarySlotNamingTheBaseTexture_DoesNotBlockTheCandidate()
+        {
+            var fixture = BuildStandardDownscaleFixture();
+            fixture.AddMaterial(
+                "materials\\m_half.xml.material",
+                ("t_xml_base_colour", "textures\\t_half.dds"),
+                ("t_xml_texture1", "textures\\t_half.dds"));
+            var (service, state) = CreateStandardDownscaleState(fixture, downscale: false);
+
+            var result = RunDownscale(service, state, fixture);
+
+            Assert.That(
+                Candidates(result).Select(candidate => Get<string>(candidate, "Path")),
+                Does.Contain("textures\\t_half.dds"));
+        }
+
+        [TestCase("shaders\\missing_for_test.xml.shader", "t_xml_texture1")]
+        [TestCase("", "t_xml_texture1")]
+        [TestCase("shaders\\weighted2_character.xml.shader", "s_diffuse")]
+        public void Downscale_UnprovenOrLegacySecondarySlotStillBlocks(
+            string shader,
+            string slot)
+        {
+            const string texture = "textures\\t_shader_slot.dds";
+            const string material = "materials\\m_shader_slot.xml.material";
+            var fixture = new DownscaleFixture();
+            fixture.AddTexture(texture, 1024, 11);
+            fixture.AddText(
+                material,
+                DownscaleMaterialXmlWithShader(
+                    shader,
+                    ("t_xml_base_colour", texture),
+                    (slot, texture)));
+            fixture.AddModel(DownscaleRigid, DownscaleWsModel, (material, 300, 1024));
+            var (service, state) = CreateDownscaleState(fixture, downscale: false);
+
+            var result = RunDownscale(service, state, fixture);
+            var reason = DownscaleReason("TextureDownscaleReasonSlot");
+            var examples = Get<Dictionary<string, List<string>>>(
+                Get<object>(result, "Plan"), "IneligibleExamples");
+
+            Assert.That(Candidates(result).Select(candidate => Get<string>(candidate, "Path")),
+                Does.Not.Contain(texture));
+            Assert.That(Reasons(result)[reason], Is.EqualTo(1));
+            Assert.That(examples[reason].Single(), Does.Contain(slot));
+        }
+
+        [Test]
+        public void Downscale_UnreadOnlyTextureSlotIsNotAReferenceOrCandidate()
+        {
+            var fixture = new DownscaleFixture();
+            const string texture = "textures\\t_unread_only.dds";
+            const string material = "materials\\m_unread_only.xml.material";
+            fixture.AddTexture(texture, 1024, 11);
+            fixture.AddMaterial(material, ("t_xml_texture1", texture));
+            fixture.AddModel(DownscaleRigid, DownscaleWsModel, (material, 300, 1024));
+            var (service, state) = CreateDownscaleState(fixture, downscale: false);
+
+            var result = RunDownscale(service, state, fixture);
+            var plan = Get<object>(result, "Plan");
+
+            Assert.That(Candidates(result), Is.Empty);
+            Assert.That(Get<int>(plan, "Unreferenced"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Downscale_HighDensityUnreadReferenceToTheActiveTextureDoesNotBlockItsCandidate()
+        {
+            const string texture = "textures\\t_shared_unread.dds";
+            const string baseMaterial = "materials\\m_shared_base.xml.material";
+            const string unreadMaterial = "materials\\m_shared_unread.xml.material";
+            var fixture = new DownscaleFixture();
+            fixture.AddTexture(texture, 1024, 11);
+            fixture.AddMaterial(baseMaterial, ("t_xml_base_colour", texture));
+            fixture.AddMaterial(unreadMaterial, ("t_xml_texture1", texture));
+            fixture.AddModel(
+                DownscaleRigid,
+                DownscaleWsModel,
+                (baseMaterial, 300, 1024));
+            fixture.AddModel(
+                "variantmeshes\\wh_main\\unread_high_density.rigid_model_v2",
+                "variantmeshes\\wh_main\\unread_high_density.wsmodel",
+                (unreadMaterial, 1200, 1024));
+            var (service, state) = CreateDownscaleState(fixture, downscale: false);
+
+            var result = RunDownscale(service, state, fixture);
+
+            Assert.That(
+                Candidates(result).Select(candidate => Get<string>(candidate, "Path")),
+                Does.Contain(texture));
+            Assert.That(Get<int>(Candidate(result, texture), "PartCount"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Downscale_DerivedDensitySkipsUnreadBaseColourOnASeparateMesh()
+        {
+            var fixture = new DownscaleFixture();
+            const string unreadTexture = "textures\\t_unread_reference.dds";
+            const string targetTexture = "textures\\t_density_target.dds";
+            const string unreadMaterial = "materials\\m_unread_reference.xml.material";
+            const string targetMaterial = "materials\\m_density_target.xml.material";
+            fixture.AddTexture(unreadTexture, 1024, 11);
+            fixture.AddTexture(targetTexture, 1024, 11);
+            fixture.AddText(
+                unreadMaterial,
+                DownscaleMaterialXml(("t_xml_base_colour", unreadTexture))
+                    .Replace(
+                        "shaders\\weighted2_character.xml.shader",
+                        "shaders\\rigid_distortion.xml.shader"));
+            fixture.AddMaterial(targetMaterial, ("t_xml_base_colour", targetTexture));
+            fixture.AddModel(
+                "variantmeshes\\wh_main\\density_reference.rigid_model_v2",
+                "variantmeshes\\wh_main\\density_reference.wsmodel",
+                (unreadMaterial, 600, 1024));
+            fixture.AddModel(
+                DownscaleRigid,
+                DownscaleWsModel,
+                (targetMaterial, 300, 1024),
+                (targetMaterial, 300, 1024));
+            var (service, state) = CreateDownscaleState(
+                fixture, downscale: false, atlasReference: null);
+
+            var result = RunDownscale(service, state, fixture);
+            var plan = Get<object>(result, "Plan");
+
+            Assert.That(Get<int>(plan, "ReferenceSamples"), Is.EqualTo(2));
+            Assert.That(Get<double?>(plan, "ReferenceDensity"), Is.EqualTo(300.0).Within(0.01));
+            Assert.That(Get<int>(plan, "Unreferenced"), Is.EqualTo(1));
         }
 
         [Test]
@@ -7337,6 +7475,75 @@ namespace Test.PackOptimizer.Core
 
             Assert.That(Get<string>(texture, "NotCroppableReason"), Does.Contain("not atlasable"));
             Assert.That(Get<double>(texture, "CoverageFraction"), Is.GreaterThan(0));
+        }
+
+        [Test]
+        public void VanillaCoverage_UnreadSecondarySlotNamingTheBaseTextureDoesNotPoisonCoverage()
+        {
+            var (service, state, fixture) = BuildSingleCoverageState(UvQuad(0, 0, 0.1f, 0.1f));
+            fixture.Vanilla[CoverageMaterial] = System.Text.Encoding.UTF8.GetBytes(
+                DownscaleMaterialXml(
+                    ("t_xml_base_colour", CoverageTexture),
+                    ("t_xml_texture1", CoverageTexture)));
+
+            var texture = CoverageTextureOf(RunCoverage(service, state, fixture), CoverageTexture);
+
+            Assert.That(Get<bool>(texture, "IsCroppable"), Is.True);
+            Assert.That(Get<string?>(texture, "BadSlot"), Is.Null);
+            Assert.That(Get<int>(texture, "AssessedParts"), Is.EqualTo(1));
+        }
+
+        [TestCase("shaders\\missing_for_test.xml.shader", "t_xml_texture1")]
+        [TestCase("", "t_xml_texture1")]
+        [TestCase("shaders\\weighted2_character.xml.shader", "s_diffuse")]
+        public void VanillaCoverage_UnprovenOrLegacySecondarySlotStillBlocks(
+            string shader,
+            string slot)
+        {
+            var (service, state, fixture) = BuildSingleCoverageState(UvQuad(0, 0, 0.1f, 0.1f));
+            fixture.Vanilla[CoverageMaterial] = System.Text.Encoding.UTF8.GetBytes(
+                DownscaleMaterialXmlWithShader(
+                    shader,
+                    ("t_xml_base_colour", CoverageTexture),
+                    (slot, CoverageTexture)));
+
+            var texture = CoverageTextureOf(RunCoverage(service, state, fixture), CoverageTexture);
+
+            Assert.That(Get<bool>(texture, "IsCroppable"), Is.False);
+            Assert.That(Get<string>(texture, "BadSlot"), Does.StartWith(slot));
+        }
+
+        [Test]
+        public void VanillaCoverage_UnreadSlotOnAnotherMeshDoesNotCreateTextureCoverage()
+        {
+            const string unusedMaterial = "materials\\v_unused_secondary.xml.material";
+            var fixture = new DownscaleFixture();
+            AddVanillaCoverageTexture(fixture, CoverageTexture, CoverageMaterial);
+            fixture.Vanilla[unusedMaterial] = System.Text.Encoding.UTF8.GetBytes(
+                DownscaleMaterialXml(("t_xml_texture1", CoverageTexture)));
+            AddCoverageModel(
+                fixture,
+                CoverageRigid,
+                CoverageWsModel,
+                modOwnedRigid: true,
+                (CoverageMaterial, UvQuad(0, 0, 0.1f, 0.1f)));
+            AddCoverageModel(
+                fixture,
+                "variantmeshes\\wh_main\\unused_secondary.rigid_model_v2",
+                "variantmeshes\\wh_main\\unused_secondary.wsmodel",
+                modOwnedRigid: true,
+                (unusedMaterial, UvQuad(0, 0, 0.9f, 0.9f)));
+            var (service, state) = CreateDownscaleState(fixture, downscale: false);
+
+            var result = RunCoverage(service, state, fixture);
+            var texture = CoverageTextureOf(result, CoverageTexture);
+
+            Assert.That(Get<int>(result, "WsModelTexturesReferenced"), Is.EqualTo(1));
+            Assert.That(CoverageAssessed(result).Select(entry => Get<string>(entry, "Path")),
+                Is.EqualTo(new[] { CoverageTexture }));
+            Assert.That(Get<bool>(texture, "IsCroppable"), Is.True);
+            Assert.That(Get<int>(texture, "AssessedParts"), Is.EqualTo(1));
+            Assert.That(Get<double>(texture, "CoverageFraction"), Is.LessThan(0.1));
         }
 
         [Test]
@@ -12312,6 +12519,52 @@ namespace Test.PackOptimizer.Core
             Assert.That(section, Does.Contain("Slots ignored because the material's shader never binds them (built sets): t_xml_colour_map in 1 material(s)"));
             Assert.That(section, Does.Contain("ignored as unread by the material's shader: t_xml_colour_map (1 material(s))"));
             Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_UnreadSecondarySlotNamingTheBaseTextureKeepsThePartEligible()
+        {
+            var world = BuildShaderSlotWorld(
+                SrWeighted2Shader,
+                ("t_xml_texture1", "textures\\sr_b1.dds"));
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1),
+                SrSkips(result) + SrPartDropReasons(result));
+            Assert.That(SrPartDropReasons(result), Does.Not.Contain("non-atlasable slot"));
+            Assert.That(Get<SortedDictionary<string, HashSet<string>>>(result, "UnreadSlotMaterials")
+                .Keys, Does.Contain("t_xml_texture1"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_Validation_RejectsLiveSlotRestoredToReplacedSourceButAllowsUnreadSibling()
+        {
+            var world = BuildShaderSlotWorld(
+                SrWeighted2Shader,
+                ("t_xml_texture1", "textures\\sr_b1.dds"));
+            var result = world.Run();
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1),
+                SrSkips(result) + SrPartDropReasons(result));
+            Assert.That(SrValidate(world), Is.Empty);
+
+            var materialPath = SrWsMaterial(world.State, SrWs, 0, 0);
+            var document = new XmlDocument();
+            document.LoadXml(Encoding.UTF8.GetString(world.Fixture.Output[materialPath]));
+            var baseColour = document.SelectNodes("/material/textures/texture")!
+                .Cast<XmlNode>()
+                .Single(node => node.SelectSingleNode("slot")?.InnerText.Trim()
+                    .Equals(SrBase, StringComparison.OrdinalIgnoreCase) == true);
+            baseColour.SelectSingleNode("source")!.InnerText = "textures\\sr_b1.dds";
+            world.Fixture.Output[materialPath] = Encoding.UTF8.GetBytes(document.OuterXml);
+
+            var replacedReferenceErrors = SrValidate(world)
+                .Where(error => error.Contains("still references the replaced texture", StringComparison.Ordinal))
+                .ToArray();
+
+            Assert.That(replacedReferenceErrors, Has.Length.EqualTo(1));
+            Assert.That(replacedReferenceErrors[0], Does.Contain($"in slot {SrBase}"));
         }
 
         [Test]

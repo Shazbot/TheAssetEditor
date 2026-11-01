@@ -701,6 +701,11 @@ namespace Editors.PackOptimizer.Core
 
                 foreach (var (slot, textureName) in material.Textures)
                 {
+                    // Keep the full XML list on the material for generation and ownership
+                    // checks; only proven unread slots are excluded from coverage users.
+                    if (IsSlotUnreadByShader(material.Shader, slot))
+                        continue;
+
                     var entry = GetEntry(textureName);
                     entry.Materials.Add(material.Path);
                     entry.WsModels.Add(binding.WsModelPath);

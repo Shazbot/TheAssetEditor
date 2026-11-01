@@ -10232,16 +10232,20 @@ namespace Editors.PackOptimizer.Core
                     try
                     {
                         var document = LoadXml(file);
+                        var shader = document.SelectSingleNode("/material/shader")?.InnerText;
                         foreach (XmlNode node in document.SelectNodes("/material/textures/texture") ?? throw new InvalidDataException("no textures"))
                         {
                             var texture = Normalize(node.SelectSingleNode("source")?.InnerText ?? node.InnerText);
-                            // Every entry of every slot (a slot may be listed twice) must be redirected:
-                            // an entry still naming a replaced texture samples it with repacked UVs.
-                            if (set.Replaced.Any(item => Normalize(item.Path).Equals(texture, StringComparison.OrdinalIgnoreCase)))
+                            var slot = GetTextureSlot(node);
+                            // Every live entry of every slot (including duplicates) must be redirected:
+                            // it samples the replaced source with repacked UVs. A proven unread slot is
+                            // preserved as authored and does not sample that source.
+                            if (!IsSlotUnreadByShader(shader, slot) &&
+                                set.Replaced.Any(item => Normalize(item.Path).Equals(texture, StringComparison.OrdinalIgnoreCase)))
                             {
                                 errors.Add(
                                     $"Generated repack material {materialPath} still references the replaced texture " +
-                                    $"{texture} in slot {GetTextureSlot(node)}");
+                                    $"{texture} in slot {slot}");
                             }
 
                             referencedTextures.Add(texture);

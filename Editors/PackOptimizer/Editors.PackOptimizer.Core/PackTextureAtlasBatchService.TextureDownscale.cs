@@ -130,7 +130,8 @@ namespace Editors.PackOptimizer.Core
             bool Generated,
             bool GeneratedByRepack,
             bool OverridesVanilla,
-            IReadOnlyList<(string Slot, string Texture)> Textures);
+            IReadOnlyList<(string Slot, string Texture)> Textures,
+            string Shader = "");
 
         // One mesh part (rigid, LOD, part) that a WSModel binds to a material.
         private sealed record TextureDownscaleUse(
@@ -949,6 +950,9 @@ namespace Editors.PackOptimizer.Core
             {
                 foreach (var (slot, texture) in material.Textures)
                 {
+                    if (IsSlotUnreadByShader(material.Shader, slot))
+                        continue;
+
                     if (!index.TryGetValue(texture, out var references))
                     {
                         references = [];
@@ -1237,7 +1241,13 @@ namespace Editors.PackOptimizer.Core
                         }
 
                         inputs.Materials[path] = new TextureDownscaleMaterial(
-                            path, true, generated, generatedByRepack, overridesVanilla, textures);
+                            path,
+                            true,
+                            generated,
+                            generatedByRepack,
+                            overridesVanilla,
+                            textures,
+                            document.SelectSingleNode("/material/shader")?.InnerText ?? string.Empty);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -1537,6 +1547,7 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 var baseColour = material.Textures
+                    .Where(entry => !IsSlotUnreadByShader(material.Shader, entry.Slot))
                     .FirstOrDefault(entry => entry.Slot.Equals(
                         "t_xml_base_colour",
                         StringComparison.OrdinalIgnoreCase))
