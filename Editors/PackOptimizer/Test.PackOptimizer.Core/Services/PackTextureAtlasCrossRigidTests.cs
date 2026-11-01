@@ -16531,6 +16531,71 @@ namespace Test.PackOptimizer.Core
         private static readonly Dictionary<string, int> SrEmissiveSeeds =
             new() { [SrBase] = 1, [SrNormal] = 2, [SrDistortion] = 7 };
 
+        private const string SrBuildingEmissiveShader = "shaders/rigid_building_emissive.xml.shader";
+        private const string SrBuildingEmissiveAlphaShader = "shaders/rigid_building_emissive_alpha.xml.shader";
+        private const string SrBuildingEmissiveMaskSlot = "t_xml_emissive";
+        private const string SrBuildingEmissiveMaskTexture = "textures\\sr_building_emissive_mask.dds";
+        private const int SrBuildingEmissiveMaskSeed = 11;
+
+        private static string SrBuildingWorldspaceEmissiveMaterialXml(
+            string shader,
+            int gateCount = 1,
+            string gateType = "float",
+            string? gateValue = "1")
+        {
+            var xml = DownscaleMaterialXml(
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrBuildingEmissiveMaskSlot, SrBuildingEmissiveMaskTexture),
+                (SrGlow, SrGlowTexture))
+                .Replace("shaders\\weighted2_character.xml.shader", shader);
+            var parameters = new List<string>
+            {
+                "<param><name>emissive_direction</name><type>float2</type><value>1,1</value></param>",
+                "<param><name>emissive_intensity</name><type>float</type><value>3.1785</value></param>",
+                "<param><name>emissive_speed</name><type>float2</type><value>0.01,-0.02</value></param>",
+                "<param><name>emissive_tiling</name><type>float2</type><value>2,2</value></param>",
+            };
+            for (var index = 0; index < gateCount; index++)
+            {
+                parameters.Add(
+                    $"<param><name>use_ws_position_as_uv</name><type>{gateType}</type>" +
+                    (gateValue == null ? string.Empty : $"<value>{gateValue}</value>") + "</param>");
+            }
+
+            return xml.Replace("</material>", "<params>" + string.Concat(parameters) + "</params></material>");
+        }
+
+        private static SrWorld BuildBuildingWorldspaceEmissiveWorld(
+            string shader = SrBuildingEmissiveShader,
+            int gateCount = 1,
+            string gateType = "float",
+            string? gateValue = "1")
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            world.AddTexture(
+                SrBuildingEmissiveMaskTexture,
+                512,
+                "BC1",
+                true,
+                SrBuildingEmissiveMaskSeed,
+                owned: true);
+            world.AddTexture(SrGlowTexture, 512, "BC1", true, 8);
+            var material = SrMaterialPath("building_emissive");
+            world.Fixture.AddText(
+                material,
+                SrBuildingWorldspaceEmissiveMaterialXml(shader, gateCount, gateType, gateValue));
+            world.AddModel(
+                SrRigid,
+                SrWs,
+                SrRoot,
+                SrRigidFactory([(material, SrBlocks((2, 3), (3, 3)))]),
+                [[material]]);
+            return world;
+        }
+
         private static string SrPartDropReasons(object result)
             => string.Join("\n", Get<IDictionary>(result, "PartDropReasons").Keys.Cast<string>());
 
@@ -16697,6 +16762,120 @@ namespace Test.PackOptimizer.Core
             arguments = [missing, 0.25, 0.25, null];
             Assert.That((bool)GetStaticMethod("TryScaleSharedRepackEmissiveParameters").Invoke(null, arguments)!, Is.False);
             Assert.That((string)arguments[3]!, Does.Contain("emissive_direction"));
+        }
+
+        [TestCase(SrBuildingEmissiveShader)]
+        [TestCase(SrBuildingEmissiveAlphaShader)]
+        public void SharedRepack_BuildingWorldspaceEmissive_CopiesRawUvMaskAndKeepsGlowAndParameters(
+            string shader)
+        {
+            var world = BuildBuildingWorldspaceEmissiveWorld(shader);
+            var sourceMaskBefore = world.Fixture.Source[SrBuildingEmissiveMaskTexture].ToArray();
+            var originalFactory = SrRigidFactory([(
+                SrMaterialPath("building_emissive"),
+                SrBlocks((2, 3), (3, 3)))]);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(outputs, Has.Count.EqualTo(3));
+            var maskCopy = outputs.Single(output => Get<bool>(output, "IsCopy"));
+            Assert.That(Get<string>(maskCopy, "Slot"), Is.EqualTo(SrBuildingEmissiveMaskSlot));
+            Assert.That(Get<string>(maskCopy, "Path"), Does.EndWith("_repack_emissive_mask.dds"));
+            Assert.That(Get<IEnumerable>(maskCopy, "Sources").Cast<string>(),
+                Is.EqualTo(new[] { SrBuildingEmissiveMaskTexture }));
+
+            var replaced = Get<IEnumerable>(built, "Replaced")
+                .Cast<(string Path, bool Owned, long Bytes)>().ToList();
+            Assert.That(replaced.Select(item => item.Path),
+                Is.EquivalentTo(new[] { "textures\\sr_b1.dds", "textures\\sr_n1.dds" }));
+            Assert.That(Get<long>(built, "Before"), Is.EqualTo(replaced.Sum(item => item.Bytes)));
+            Assert.That(Get<long>(built, "After"), Is.EqualTo(outputs.Sum(output => Get<long>(output, "Bytes"))));
+            Assert.That(world.Fixture.Output[SrBuildingEmissiveMaskTexture], Is.EqualTo(sourceMaskBefore));
+
+            var generatedPath = SrWsMaterial(world.State, SrWs, 0, 0);
+            var generatedXml = System.Text.Encoding.UTF8.GetString(world.Fixture.Output[generatedPath]);
+            Assert.That(SrSlotNode(generatedXml, SrBuildingEmissiveMaskSlot).OuterXml,
+                Does.Contain(Get<string>(maskCopy, "Path")));
+            Assert.That(generatedXml, Does.Contain(SrGlowTexture));
+            var generatedDocument = new XmlDocument();
+            generatedDocument.LoadXml(generatedXml);
+            var authoredDocument = new XmlDocument();
+            authoredDocument.LoadXml(SrBuildingWorldspaceEmissiveMaterialXml(shader));
+            Assert.That(
+                generatedDocument.SelectSingleNode("/material/params")!.OuterXml,
+                Is.EqualTo(authoredDocument.SelectSingleNode("/material/params")!.OuterXml));
+
+            var seeds = new Dictionary<string, int>
+            {
+                [SrBase] = 1,
+                [SrNormal] = 2,
+                [SrBuildingEmissiveMaskSlot] = SrBuildingEmissiveMaskSeed,
+            };
+            var (samples, _) = AssertSrPixels(world, SrRigid, SrWs, originalFactory, seeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(Get<int>(result, "EmissiveParts"), Is.Zero);
+            Assert.That(Get<int>(result, "EmissiveCopies"), Is.Zero);
+            Assert.That(Get<int>(result, "EmissiveMaterialsRescaled"), Is.Zero);
+            Assert.That(Get<int>(result, "EmissiveAspectGroups"), Is.Zero);
+            Assert.That(Get<int>(result, "BuildingWorldspaceEmissiveParts"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "BuildingWorldspaceEmissiveCopies"), Is.EqualTo(1));
+            Assert.That(Get<long>(result, "BuildingWorldspaceEmissiveCopyBytes"),
+                Is.EqualTo(Get<byte[]>(maskCopy, "Data").LongLength));
+            var maskDetails = Get<IEnumerable>(built, "BuildingWorldspaceEmissiveMasks").Cast<string>().ToList();
+            Assert.That(maskDetails, Has.Count.EqualTo(1));
+            Assert.That(maskDetails[0], Does.Contain(SrBuildingEmissiveMaskTexture).And.Contain(Get<string>(maskCopy, "Path")));
+
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("Building-worldspace emissive mask copy: 1 part(s)"));
+            Assert.That(section, Does.Contain(SrBuildingEmissiveMaskTexture).And.Contain(Get<string>(maskCopy, "Path")));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [TestCase(0, "float", "1", "is missing")]
+        [TestCase(2, "float", "1", "is duplicated")]
+        [TestCase(1, "float2", "1", "not typed as float")]
+        [TestCase(1, "float", null, "has no value")]
+        [TestCase(1, "float", "malformed", "malformed or non-finite")]
+        [TestCase(1, "float", "0", "must equal 1")]
+        [TestCase(1, "float", "0.25", "must equal 1")]
+        [TestCase(1, "float", "NaN", "malformed or non-finite")]
+        public void SharedRepack_BuildingWorldspaceEmissive_RejectsInvalidGate(
+            int gateCount,
+            string gateType,
+            string? gateValue,
+            string reason)
+        {
+            var world = BuildBuildingWorldspaceEmissiveWorld(
+                SrBuildingEmissiveShader,
+                gateCount,
+                gateType,
+                gateValue);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrPartDropReasons(result), Does.Contain("building-worldspace emissive gate use_ws_position_as_uv"));
+            Assert.That(SrPartDropReasons(result), Does.Contain(reason));
+            Assert.That(Get<int>(result, "BuildingWorldspaceEmissiveCopies"), Is.Zero);
+            Assert.That(Get<int>(result, "EmissiveCopies"), Is.Zero);
+            Assert.That(world.Fixture.Output.Keys.Count(path => path.Contains("_repack_")), Is.Zero);
+        }
+
+        [Test]
+        public void SharedRepack_BuildingWorldspaceEmissive_DoesNotAllowUnverifiedSiblingShader()
+        {
+            var world = BuildBuildingWorldspaceEmissiveWorld("shaders/rigid_building_emissive_extra.xml.shader");
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrPartDropReasons(result), Does.Contain("non-atlasable slot t_xml_emissive"));
+            Assert.That(Get<int>(result, "BuildingWorldspaceEmissiveCopies"), Is.Zero);
+            Assert.That(world.Fixture.Output.Keys.Count(path => path.Contains("_repack_")), Is.Zero);
         }
 
         // ---- dissolve shaders: detail kept + scale divided, map copied ----
@@ -19886,6 +20065,9 @@ namespace Test.PackOptimizer.Core
             // 42: confirmed-missing standard secondary material textures are passed through by the
             // shared repack; the pinned stages do not include shared-repack output, so this is unchanged.
             [42] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 43: verified building-worldspace emissive masks use a shared-repack copy path; the
+            // pinned stages do not include shared-repack output, so this is unchanged.
+            [43] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()

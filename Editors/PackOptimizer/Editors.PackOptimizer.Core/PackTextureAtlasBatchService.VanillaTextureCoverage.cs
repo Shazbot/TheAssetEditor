@@ -143,7 +143,8 @@ namespace Editors.PackOptimizer.Core
             IReadOnlyList<(string Slot, string Texture)> Textures,
             // The material's shader, normalised to lower case with forward slashes
             // ("shaders/weighted4_character_emissive.xml.shader"), and the raw text of the emissive
-            // scroll and dissolve parameters the shared repack compensates (lower-case name -> value text).
+            // scroll/dissolve parameters the shared repack compensates plus the building-worldspace
+            // emissive eligibility gate (lower-case name -> value text; the gate is never compensated).
             string Shader = "",
             IReadOnlyDictionary<string, string>? Parameters = null);
 
@@ -615,6 +616,7 @@ namespace Editors.PackOptimizer.Core
                         var document = LoadXml(file);
                         var emissive = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                         var flowParametersSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var buildingEmissiveGateParametersSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         var parameterNodes = document.SelectNodes("/material/params/param");
                         if (parameterNodes != null)
                         {
@@ -623,6 +625,32 @@ namespace Editors.PackOptimizer.Core
                                 var name = node.SelectSingleNode("name")?.InnerText.Trim() ?? string.Empty;
                                 var parameterKey = name.ToLowerInvariant();
                                 var expectedType = GetSharedRepackCompensatedParameterType(name);
+                                if (name.Equals(
+                                        SharedRepackBuildingEmissiveGateParameter,
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var gateValue = node.SelectSingleNode("value");
+                                    if (!buildingEmissiveGateParametersSeen.Add(parameterKey))
+                                    {
+                                        emissive[parameterKey] = SharedRepackBuildingEmissiveGateDuplicateSentinel;
+                                    }
+                                    else if (gateValue == null)
+                                    {
+                                        emissive[parameterKey] = SharedRepackBuildingEmissiveGateMissingValueSentinel;
+                                    }
+                                    else if (node.SelectSingleNode("type")?.InnerText.Trim().Equals(
+                                                 "float", StringComparison.OrdinalIgnoreCase) != true)
+                                    {
+                                        emissive[parameterKey] = SharedRepackBuildingEmissiveGateWrongTypeSentinel;
+                                    }
+                                    else
+                                    {
+                                        emissive[parameterKey] = gateValue.InnerText.Trim();
+                                    }
+
+                                    continue;
+                                }
+
                                 if (IsSharedRepackFlowParameter(name))
                                 {
                                     // A duplicate, missing value or wrong XML type makes the parameter
