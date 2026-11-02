@@ -918,6 +918,11 @@ namespace Editors.PackOptimizer.Core
             public Dictionary<string, int[]>
                 CrossRigidIdealMergeConfigurationDrawCache { get; } =
                 new(StringComparer.Ordinal);
+            // No-atlas rewrite tiers (report only): the shader of each
+            // material.
+            public Dictionary<string, string>
+                CrossRigidNoAtlasMaterialShaders { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> CrossRigidIdealMergeSharedAtlasMaterialPaths
                 { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int CrossRigidIdealMergeSharedAtlasTextureCount { get; set; }

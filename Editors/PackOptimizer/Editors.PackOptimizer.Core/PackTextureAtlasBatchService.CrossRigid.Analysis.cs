@@ -76,6 +76,7 @@ namespace Editors.PackOptimizer.Core
             state.CrossRigidIdealMergeMaterialIdentityCache.Clear();
             state.CrossRigidIdealMergeConfigurationDrawCache.Clear();
             state.CrossRigidIdealMergeSharedAtlasMaterialPaths.Clear();
+            state.CrossRigidNoAtlasMaterialShaders.Clear();
             state.CrossRigidIdealMergeSharedAtlasTextureCount = 0;
             state.CrossRigidIdealMergeSharedAtlasSizedTextureCount = 0;
             state.CrossRigidIdealMergeSharedAtlasBcnBytes = 0;

@@ -1295,3 +1295,53 @@ Caveats before building anything:
 Verification: 989 focused Release tests pass (979 before plus 10 new in `PackTextureAtlasFarLodAtlasCostTests`: LOD split sums, far saving excludes LOD 0/1 and T0, far groups, far LOD rows, mip reduction of sizes and bytes, 4 px block floor, generated-only retirement, mesh-level blockers off, greedy on far bytes, channel clamp). Bench defaults (no flags) in `K:\projects\assedfork-bench\xr-far-lod-atlas-phase0b-20261102`: sorted `fingerprint.txt` lines above `== report` are identical to `teb-phase0` (6.747 files) and `albion-phase0` (4.817 files). Process time TEB 139,1 s (Phase 0: 143,8 s), Albion 84,6 s (83,3 s): within noise. No WHMM host was built or shipped.
 
 Reading with whole-model geometry (added on review): a VMD slot picks one mesh for all LODs, so a generated payload must also carry its near LODs (unmerged source parts). Charged that way, TEB's 88.3 far draws at the 64 MiB cap cost 237.1 MiB of geometry plus 36.3 MiB (m=2) or 141.8 MiB (m=1) of atlas: about +270 / +380 MiB, 3.1 / 4.3 MiB per far draw, versus about 1.4 MB per draw for today's default merging (46.4 draws, +63 MB). Texture cost alone passes; the combined cost is 2-3x today's per draw for about 4.5 % of instances (about 0.4-1 % FPS). Decision 2026-11-02: not built yet; cheaper no-atlas rewrite tiers (weighted2/4, alpha, duplicate texture paths) are measured first.
+
+## 2026-11-02: No-atlas rewrite tiers (report only)
+
+Question: how many merges become possible by cheap rewrites that need no texture atlas, with every texture path still having to match? Three report-only tiers (W, A, WA) were added to the ideal cross-rigid analysis (IdealMerge tiers 5..7, `PackTextureAtlasBatchService.CrossRigid.IdealMergeNoAtlas.cs`), each reusing the per-configuration pooling, payload accounting and greedy-under-growth-caps machinery. OutputVersion stays 48; nothing feeds selection or emission.
+
+Definitions (all start from T0 = RMV identity + full material identity):
+- W: weighted2/weighted4 unified, same transform as T3 (shader "weighted2" -> "weighted4", RMV Cinematic vertices treated as Weighted, RMV shader name renamed).
+- A: alpha variant unified, same transform as T4 (shader `_alpha` suffix stripped, RMV render flag dropped). Weighted formats stay strict in A alone.
+- WA: both. Self-check (OK on both packs): T0 >= W,A >= WA, T3 <= W, T4 <= WA.
+- D (duplicate textures canonicalized by content hash) and its combinations WD, AD, WAD were measured first and then removed from the code, see the D result below.
+- Greedy: the existing greedy on full-rigid geometry bytes of each distinct configuration payload, same per-payload ceiling, caps 64 / 128 / 256 MiB; saving is the tier's total saving over the payload (so it includes what T0 already gets), "above T0" is the same accepted payloads' tier saving minus their T0 saving. On both packs the accepted set is identical at 64, 128 and 256 MiB (the per-payload ceiling binds first), so one row per tier is shown. Absolute numbers are lower than the real selection (46.4 draws on TEB) because the real selection also uses sub-group payloads; read them as increments between tiers.
+- W cost: extra vertex bytes = sum over weighted2 parts that are pooled in a group with weighted4 parts (each source part once over all LODs) of vertex count x (Cinematic vertex size - Weighted vertex size) for the rigid's RMV version; also the total if every weighted2 part of the accepted payloads were converted.
+- A cost: army-weighted expected instances of opaque-shader parts that sit in a pooled group with an `_alpha` shader part (they would render alpha-tested after merging; unit weight = one draw per entity, same weighting as the savings). Twin check reuses the shader channel table and `GetCompactionShaderName` of SwitchOpaqueAlphaShaders in the other direction: opaque shader S needs `S_alpha` (after the weighted rename when W is part of the tier).
+
+### TEB (baseline 1,980.7 draws)
+
+| Tier | Saved (ideal, all configs) | Above T0 | Greedy accepted | Draws | Geometry MiB (per draw) | LOD split of accepted saving L0 / L1 / L2 / L3 | Above T0 L0 / L1 / L2 / L3 |
+|---|---|---|---|---|---|---|---|
+| T0 | 52.20 (2.6 %) | - | 84 | 24.92 | 34.4 (1.38) | 6.37 / 5.86 / 6.34 / 6.34 | 0 |
+| W | 59.89 (3.0 %) | 7.69 | 86 | 26.92 | 34.7 (1.29) | 7.12 / 7.12 / 6.34 / 6.34 | 0.75 / 1.26 / 0 / 0 |
+| A | 54.87 (2.8 %) | 2.67 | 88 | 26.09 | 37.4 (1.44) | 6.53 / 6.02 / 6.77 / 6.77 | 0 / 0 / 0.27 / 0.27 |
+| WA | 62.56 (3.2 %) | 10.36 | 90 | 28.10 | 37.7 (1.34) | 7.28 / 7.28 / 6.77 / 6.77 | 0.75 / 1.26 / 0.27 / 0.27 |
+
+Same rows at caps 64, 128 and 256 MiB. For comparison T1 (atlas) saves 317.7 and T4 410.8.
+
+TEB costs: W converts 20 weighted2 parts pooled with weighted4 parts, 0.01 MiB of extra vertex bytes (all weighted2 parts of the accepted payloads: 1.24 MiB, 1.34 MiB for WA), 3 distinct materials. A renders 1.18 opaque part-instances alpha-tested after merging (0.1 % of baseline draws), 1 opaque shader involved, 0 without an `_alpha` twin in the vanilla table.
+
+### Albion (baseline 1,561.8 draws; T1 saves 428.0)
+
+| Tier | Saved | Above T0 | Greedy accepted | Draws | Geometry MiB (per draw) | LOD split L0 / L1 / L2 / L3 | Above T0 L0 / L1 / L2 / L3 |
+|---|---|---|---|---|---|---|---|
+| T0 | 11.14 (0.7 %) | - | 1 | 3.20 | 0.2 (0.07) | 1.6 / 1.6 / 0 / 0 | 0 |
+| W | 11.15 (0.7 %) | 0.007 | 1 | 3.20 | 0.2 (0.07) | 1.6 / 1.6 / 0 / 0 | 0 |
+| A | 14.34 (0.9 %) | 3.20 | 1 | 6.40 | 0.2 (0.04) | 1.6 / 1.6 / 1.6 / 1.6 | 0 / 0 / 1.6 / 1.6 |
+| WA | 14.35 (0.9 %) | 3.21 | 1 | 6.40 | 0.2 (0.04) | = A | = A |
+
+Same at all three caps (only one payload passes the per-payload ceiling on Albion). Albion costs: W converts 0 parts / 0 materials (all weighted2 parts of the accepted payload: 0.03 MiB). A renders 3.2 opaque part-instances alpha-tested (0.2 % of baseline draws), 1 shader involved, 0 missing twins.
+
+D result (tier removed from the code): duplicate textures gained 0 draws on both packs (D, WD, AD, WAD equalled T0, W, A, WA exactly). TEB has 22 byte-identical texture groups of 103 paths (48.4 MiB in all copies, 24.7 MiB redundant), Albion 5 groups of 22 paths (11.3 MiB, 5.7 MiB redundant); Albion has one material pair that differs only by duplicates but it is never pooled in one configuration. The D tier was removed because it gains nothing and hashes about 1 GB of texture bytes per diagnostic run (1,083 MiB / 2.9 s on TEB, 915 MiB / 2.2 s on Albion).
+
+### Reading
+
+- No-atlas rewrites are small. The whole WA ceiling is +10.4 draws on TEB (0.5 % of baseline) and +3.2 on Albion, against +265 (T1) and +359 (T4) above T0 for the atlas. They cannot replace the atlas path.
+- Duplicate textures (D) gain nothing on either pack (byte-identical copies exist but never block a merge); the tier was removed.
+- W is the cheapest per draw: on TEB the accepted set gains 2.0 draws (+8 % over the ideal-greedy T0, about +4 % of today's 46.4) for 0.3 MiB of geometry and 0.01 MiB of vertex conversion, about 0.15 MiB per added draw and a better overall 1.29 MiB per draw than T0's 1.38. Nothing on Albion. It needs 3 materials moved to the weighted4 shader and reuses the vertex layout conversion the weighted4 format already has, so it is a possible small add-on, not a reason by itself.
+- A gives +1.2 draws (TEB, accepted) for +3.0 MiB, about 2.5 MiB per added draw, plus 1.2 opaque part-instances moved to an alpha-tested shader (a GPU cost). WA on TEB: +3.2 draws for +3.3 MiB (about 1.0 MiB per added draw). On Albion A doubles the single accepted payload's saving (3.2 -> 6.4 draws) at no extra geometry, all at LODs 2 and 3.
+- Against today's default (46.4 draws for +63 MB, about 1.4 MB per draw) the best no-atlas increment (W, about 0.15 MiB per draw) is 10x cheaper per added draw but is only about 2 draws; against the far-LOD atlas estimate (about 3.1 MiB per draw at mip 2 with whole-model geometry, 88 draws) A and WA are cheaper per draw (1.0 to 2.5 MiB) but add 1-3 draws, not tens. Conclusion: not worth building as a separate stage; if the merge machinery is touched anyway, W (weighted2->weighted4 unification) is the one rewrite that costs almost nothing.
+- Approximation notes: the RMV render flag is assumed to carry the alpha variant (as in T4); a merged opaque+alpha group is assumed to take the alpha shader; the twin check covers only shaders met in the accepted payloads; payloads are whole-configuration payloads, not sub-groups.
+
+Verification: 995 focused Release tests pass (989 before plus 5 new `NoAtlasTiers_*` in `PackTextureAtlasCrossRigidTests`: W/A/WA merges and monotone combinations with the self-check, W unifies weighted2/4 but not textures, A unifies alpha twins only, pure material identity flags, payload W/A costs and report lines). Bench defaults (no flags) in `K:\projects\assedfork-bench\xr-no-atlas-tiers-20261102`: sorted `fingerprint.txt` lines above `== report` are identical to `teb-phase0b` and `albion-phase0b`. Timing with D: TEB 149.3 s (Phase 0b: 139.1 s), Albion 87.6 s (84.6 s). After removing D, TEB (`teb-tiers-noD`, same fingerprint lines) takes 141.8 s and "Analyze: ideal merge tiers" 4.2 s (Phase 0b 2.9 s, with D 9.3 s). No WHMM host was built or shipped.

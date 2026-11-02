@@ -1498,8 +1498,10 @@ namespace Test.PackOptimizer.Core
             double[] actual,
             params double[] drawsPerEntityByTier)
         {
-            Assert.That(actual, Has.Length.EqualTo(drawsPerEntityByTier.Length));
-            for (var tier = 0; tier < actual.Length; tier++)
+            Assert.That(
+                actual.Length,
+                Is.GreaterThanOrEqualTo(drawsPerEntityByTier.Length));
+            for (var tier = 0; tier < drawsPerEntityByTier.Length; tier++)
             {
                 Assert.That(
                     actual[tier],
@@ -1864,7 +1866,7 @@ namespace Test.PackOptimizer.Core
                         CreateIdealResolver(components),
                     ])!;
 
-            Assert.That(tiers, Is.EqualTo(new double[5]));
+            Assert.That(tiers, Is.EqualTo(new double[8]));
         }
 
         // Unreadable materials fall back to their path, so only parts using
@@ -2220,6 +2222,234 @@ namespace Test.PackOptimizer.Core
             Assert.That(
                 ReadProperty(accounting, "ExpansionLimitFailureCount"),
                 Is.EqualTo(1));
+        }
+
+        // ---- No-atlas rewrite tiers (W / A / WA) ----
+
+        // Draws per entity of T0 and the tiers W, A, WA.
+        private static void AssertNoAtlasDraws(
+            object state,
+            double[] tiers,
+            double t0,
+            params double[] noAtlasDraws)
+        {
+            Assert.That(tiers, Has.Length.EqualTo(8));
+            Assert.That(noAtlasDraws, Has.Length.EqualTo(3));
+            var expected = new[] { t0 }.Concat(noAtlasDraws).ToArray();
+            var indices = new[] { 0, 5, 6, 7 };
+            for (var index = 0; index < indices.Length; index++)
+            {
+                Assert.That(
+                    tiers[indices[index]],
+                    Is.EqualTo(ExpectedForConstantDraws(state, expected[index]))
+                        .Within(1e-9),
+                    $"tier index {indices[index]}");
+            }
+        }
+
+        // Three parts, each added distinction unified by one rewrite:
+        // P0 weighted2 tex/a; P1 weighted4 (cinematic) tex/a; P2 weighted2
+        // alpha tex/a.
+        private static (object State, Dictionary<string, object> Components,
+            string[] WsPaths) CreateNoAtlasFixture()
+        {
+            var files = new Dictionary<string, byte[]>
+            {
+                [@"materials\p0.material"] = System.Text.Encoding.UTF8.GetBytes(
+                    BuildMaterialXml("shaders/weighted2_character.xml.shader", "tex/a.dds")),
+                [@"materials\p1.material"] = System.Text.Encoding.UTF8.GetBytes(
+                    BuildMaterialXml("shaders/weighted4_character.xml.shader", "tex/a.dds")),
+                [@"materials\p2.material"] = System.Text.Encoding.UTF8.GetBytes(
+                    BuildMaterialXml("shaders/weighted2_character_alpha.xml.shader", "tex/a.dds")),
+            };
+            var state = CreateIdealState(files);
+            var items = Enumerable.Range(0, 3)
+                .Select(index => (
+                    WsPath: $@"models
+oatlas_{index}.wsmodel",
+                    Part: CreateIdealPart(cinematic: index == 1),
+                    Material: $@"materials\p{index}.material"))
+                .ToArray();
+            return (
+                state,
+                CreateIdealComponents(items),
+                items.Select(item => item.WsPath).ToArray());
+        }
+
+        [Test]
+        public void NoAtlasTiers_AllRewrites_MergeAsDefinedAndStayMonotone()
+        {
+            var (state, components, wsPaths) = CreateNoAtlasFixture();
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, wsPaths));
+
+            var baseline = RunBaseline(state, expansion, components);
+            var tiers = RunIdeal(state, expansion, components);
+
+            AssertNoAtlasDraws(state, tiers, 3, 2, 2, 1);
+            // Self-check T0 <= tiers and WA <= W, A.
+            for (var tier = 5; tier < 8; tier++)
+                Assert.That(tiers[tier], Is.LessThanOrEqualTo(tiers[0] + 1e-9));
+            Assert.That(tiers[7], Is.LessThanOrEqualTo(Math.Min(tiers[5], tiers[6]) + 1e-9));
+
+            GetStateProperty<Dictionary<string, double>>(
+                state,
+                "CrossRigidBaselineExpectedDrawsByVmd")[BaselineVmdPath] = baseline;
+            var byVmd = GetStateProperty<Dictionary<string, double[]>>(
+                state,
+                "CrossRigidIdealMergeExpectedDrawsByVmd");
+            byVmd[BaselineVmdPath] = tiers;
+            var violations = GetStaticMethod(
+                "CountCrossRigidNoAtlasInvariantViolations");
+            Assert.That(violations.Invoke(null, [state]), Is.EqualTo(0));
+            var broken = (double[])tiers.Clone();
+            broken[7] = broken[0] + 1;
+            byVmd[BaselineVmdPath] = broken;
+            Assert.That(violations.Invoke(null, [state]), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void NoAtlasTiers_Weighted_UnifiesWeightedButNotTextures()
+        {
+            var materials = new Dictionary<string, string>
+            {
+                [@"materials\w2.material"] = BuildMaterialXml(
+                    "shaders/weighted2_character.xml.shader", "tex/a.dds"),
+                [@"materials\w4.material"] = BuildMaterialXml(
+                    "shaders/weighted4_character.xml.shader", "tex/a.dds"),
+                [@"materials\w4b.material"] = BuildMaterialXml(
+                    "shaders/weighted4_character.xml.shader", "tex/b.dds"),
+            };
+            var state = CreateIdealState(materials);
+            var items = new[]
+            {
+                (WsPath: @"models\w_0.wsmodel", Part: CreateIdealPart(), Material: @"materials\w2.material"),
+                (WsPath: @"models\w_1.wsmodel", Part: CreateIdealPart(cinematic: true), Material: @"materials\w4.material"),
+                (WsPath: @"models\w_2.wsmodel", Part: CreateIdealPart(cinematic: true), Material: @"materials\w4b.material"),
+            };
+            var tiers = RunIdeal(
+                state,
+                CreateExpansion(
+                    CreateVisualConfiguration(1.0, items.Select(i => i.WsPath).ToArray())),
+                CreateIdealComponents(items));
+
+            // W merges weighted2 with the same-texture weighted4 part only.
+            AssertNoAtlasDraws(state, tiers, 3, 2, 3, 2);
+        }
+
+        [Test]
+        public void NoAtlasTiers_Alpha_UnifiesAlphaTwinsOnly()
+        {
+            var materials = new Dictionary<string, string>
+            {
+                [@"materials\o.material"] = BuildMaterialXml(
+                    "shaders/weighted4_character.xml.shader", "tex/a.dds"),
+                [@"materials.material"] = BuildMaterialXml(
+                    "shaders/weighted4_character_alpha.xml.shader", "tex/a.dds"),
+                [@"materialsb.material"] = BuildMaterialXml(
+                    "shaders/weighted4_character_alpha.xml.shader", "tex/b.dds"),
+            };
+            var state = CreateIdealState(materials);
+            var items = new[]
+            {
+                (WsPath: @"models_0.wsmodel", Part: CreateIdealPart(), Material: @"materials\o.material"),
+                (WsPath: @"models_1.wsmodel", Part: CreateIdealPart(), Material: @"materials.material"),
+                (WsPath: @"models_2.wsmodel", Part: CreateIdealPart(), Material: @"materialsb.material"),
+            };
+            var tiers = RunIdeal(
+                state,
+                CreateExpansion(
+                    CreateVisualConfiguration(1.0, items.Select(i => i.WsPath).ToArray())),
+                CreateIdealComponents(items));
+
+            // A unifies the opaque and alpha variants with equal textures; the
+            // alpha variant with another texture stays apart; W changes nothing.
+            AssertNoAtlasDraws(state, tiers, 3, 3, 2, 2);
+        }
+
+        [Test]
+        public void NoAtlasTiers_PureMaterialIdentity_FlagsApplyIndependently()
+        {
+            static XmlDocument Load(string xml)
+            {
+                var document = new XmlDocument();
+                document.LoadXml(xml);
+                return document;
+            }
+
+            string Identity(XmlDocument document, int flags)
+                => (string)GetStaticMethod(
+                        "BuildCrossRigidNoAtlasMaterialIdentityCore")
+                    .Invoke(null, [document, flags])!;
+
+            var plain = Load(BuildMaterialXml("shaders/weighted2_character.xml.shader", "tex/a.dds"));
+            var w4 = Load(BuildMaterialXml("shaders/weighted4_character.xml.shader", "tex/a.dds"));
+            var alpha = Load(BuildMaterialXml("shaders/weighted2_character_alpha.xml.shader", "tex/a.dds"));
+            var copy = Load(BuildMaterialXml("shaders/weighted2_character.xml.shader", "tex/copy.dds"));
+
+            Assert.That(Identity(plain, 0), Is.Not.EqualTo(Identity(w4, 0)));
+            Assert.That(Identity(plain, 1), Is.EqualTo(Identity(w4, 1)));
+            Assert.That(Identity(plain, 1), Is.Not.EqualTo(Identity(alpha, 1)));
+            Assert.That(Identity(plain, 2), Is.EqualTo(Identity(alpha, 2)));
+            Assert.That(Identity(plain, 2), Is.Not.EqualTo(Identity(w4, 2)));
+            // Texture paths still count in every no-atlas tier.
+            Assert.That(Identity(plain, 3), Is.Not.EqualTo(Identity(copy, 3)));
+            Assert.That(Identity(plain, 1), Is.Not.EqualTo(Identity(copy, 1)));
+        }
+
+        [Test]
+        public void NoAtlasTiers_PayloadAccounting_ReportsWeightedAndAlphaCosts()
+        {
+            var (state, components, wsPaths) = CreateNoAtlasFixture();
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, wsPaths));
+            var baseline = RunBaseline(state, expansion, components);
+            var tiers = RunIdeal(state, expansion, components);
+            RunAccounting(state, expansion, components);
+
+            var payload = ((IDictionary)ReadProperty(
+                    ReadProperty(state, "CrossRigidIdealMergeAccounting"),
+                    "Payloads"))
+                .Values.Cast<object>().Single();
+            var data = ReadProperty(payload, "NoAtlas");
+            var factory = VertexFactory.Create();
+            var version = default(RmvFileHeader).Version;
+            var extraPerPart = 4L *
+                (factory.GetVertexSize(VertexFormat.Cinematic, version) -
+                 factory.GetVertexSize(VertexFormat.Weighted, version));
+            // W tier: P0 (weighted2) pooled with P1 (weighted4); P2 is
+            // weighted2 but not mixed. WA pools all three.
+            Assert.That(
+                ((long[])ReadProperty(data, "ConvertedExtraBytes"))[5],
+                Is.EqualTo(extraPerPart));
+            Assert.That(
+                ((long[])ReadProperty(data, "ConvertedExtraBytes"))[7],
+                Is.EqualTo(2 * extraPerPart));
+            Assert.That(
+                (long)ReadProperty(data, "AllWeighted2ExtraBytes"),
+                Is.EqualTo(2 * extraPerPart));
+            // A tier: P0 joins the alpha part P2 (one opaque part per LOD).
+            var opaque = ((IDictionary[])ReadProperty(data, "OpaqueWeightedByShader"))[6];
+            Assert.That(
+                opaque.Values.Cast<double>().Sum(),
+                Is.EqualTo(ExpectedForConstantDraws(state, 1)).Within(1e-9));
+
+            GetStateProperty<Dictionary<string, double>>(
+                state,
+                "CrossRigidBaselineExpectedDrawsByVmd")[BaselineVmdPath] = baseline;
+            GetStateProperty<Dictionary<string, double[]>>(
+                state,
+                "CrossRigidIdealMergeExpectedDrawsByVmd")[BaselineVmdPath] = tiers;
+            var lines = (string[])GetStaticMethod(
+                    "BuildCrossRigidIdealMergeReportLines")
+                .Invoke(null, [state, 0.0])!;
+            Assert.That(lines, Has.Some.Contains("W T0 + weighted2/weighted4 unified (no atlas, approximation): expected battle draws="));
+            Assert.That(lines, Has.Some.Contains("above T0="));
+            Assert.That(lines, Has.Some.Contains("Self-check no-atlas tiers"));
+            Assert.That(lines, Has.Some.Contains("W cap 64 MiB: 1 accepted"));
+            Assert.That(lines, Has.Some.Contains("W weighted2->weighted4 cost"));
+            Assert.That(lines, Has.Some.Contains("A alpha cost: opaque part instances rendered alpha-tested"));
+            Assert.That(lines, Has.None.Contains("NaN"));
         }
 
         // ---- Atlas inputs / components of accepted payloads ----

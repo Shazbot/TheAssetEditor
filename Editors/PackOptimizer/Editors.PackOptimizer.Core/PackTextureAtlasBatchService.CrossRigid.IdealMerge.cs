@@ -25,7 +25,11 @@ namespace Editors.PackOptimizer.Core
         //   T2 T1 + the legacy s_* texture slots removed.
         //   T3 T2 + weighted2/weighted4 unified (approximation).
         //   T4 T3 + _alpha shader variants unified (approximation).
-        private const int CrossRigidIdealMergeTierCount = 5;
+        // Tiers 5..7 are the "no-atlas rewrite" tiers (see
+        // PackTextureAtlasBatchService.CrossRigid.IdealMergeNoAtlas.cs):
+        // T0 plus weighted2/4 (W) and/or alpha variant (A) unified, with
+        // every texture path still having to match.
+        private const int CrossRigidIdealMergeTierCount = 8;
         private const double CrossRigidIdealMergeSelfCheckTolerance = 1e-9;
 
         private static readonly string[] CrossRigidIdealMergeTierLabels =
@@ -35,6 +39,9 @@ namespace Editors.PackOptimizer.Core
             "T2 shared atlas, legacy slots ignored",
             "T3 T2 + weighted2/weighted4 unified (approximation)",
             "T4 T3 + alpha variant unified (approximation)",
+            "W T0 + weighted2/weighted4 unified (no atlas, approximation)",
+            "A T0 + alpha variant unified (no atlas, approximation)",
+            "WA W + alpha variant unified (no atlas, approximation)",
         ];
 
         private static readonly string[] CrossRigidLegacyTextureSlots =
@@ -46,10 +53,15 @@ namespace Editors.PackOptimizer.Core
             "s_mask",
         ];
 
+        // Shader .. PartKey: report-only data of the no-atlas rewrite tiers.
         private readonly record struct CrossRigidIdealMergePart(
             int[] IdentityIds,
             int VertexCount,
-            string MaterialPath);
+            string MaterialPath,
+            string Shader = "",
+            bool IsWeighted2 = false,
+            long Weighted4ExtraBytes = 0,
+            string PartKey = "");
 
         private static void RecordCrossRigidIdealMergeExpectedDraws(
             BatchState state,
@@ -242,6 +254,7 @@ namespace Editors.PackOptimizer.Core
                      partIndex < assignments.Length;
                      partIndex++)
                 {
+                    var normalizedMaterial = Normalize(assignments[partIndex]);
                     parts.Add(new CrossRigidIdealMergePart(
                         GetCrossRigidIdealMergePartIdentityIds(
                             state,
@@ -251,7 +264,16 @@ namespace Editors.PackOptimizer.Core
                             models[partIndex],
                             assignments[partIndex]),
                         models[partIndex].Mesh.VertexList.Length,
-                        Normalize(assignments[partIndex])));
+                        normalizedMaterial,
+                        GetCrossRigidNoAtlasMaterialShader(
+                            state,
+                            normalizedMaterial),
+                        models[partIndex].Material.BinaryVertexFormat ==
+                        VertexFormat.Weighted,
+                        GetCrossRigidNoAtlasWeighted4ExtraBytes(
+                            models[partIndex],
+                            component.Rigid.Header.Version),
+                        $"{Normalize(component.RigidPath)}|{sourceLodIndex}|{partIndex}"));
                 }
             }
 
@@ -363,6 +385,13 @@ namespace Editors.PackOptimizer.Core
                         state,
                         normalizedMaterialPath,
                         4)),
+                .. GetCrossRigidNoAtlasPartIdentities(
+                    state,
+                    model,
+                    rmvIdentity,
+                    weightedUnifiedRmvIdentity,
+                    alphaUnifiedRmvIdentity,
+                    normalizedMaterialPath),
             ];
             var ids = new int[identities.Length];
             for (var tier = 0; tier < identities.Length; tier++)
@@ -415,10 +444,16 @@ namespace Editors.PackOptimizer.Core
             {
                 try
                 {
+                    var document =
+                        GetMaterialDocument(state, normalizedMaterialPath);
                     identity = "ideal:" + ContentHash(
-                        BuildCrossRigidIdealMergeMaterialIdentity(
-                            GetMaterialDocument(state, normalizedMaterialPath),
-                            tier));
+                        tier >= CrossRigidNoAtlasFirstTier
+                            ? BuildCrossRigidNoAtlasMaterialIdentityCore(
+                                document,
+                                GetCrossRigidNoAtlasTierFlags(tier))
+                            : BuildCrossRigidIdealMergeMaterialIdentity(
+                                document,
+                                tier));
                 }
                 catch
                 {
@@ -521,8 +556,20 @@ namespace Editors.PackOptimizer.Core
         private static string GetCrossRigidIdealMergeRmvIdentity(
             RmvModel model,
             bool ignoreRenderFlag)
+            => GetCrossRigidNoAtlasRmvIdentity(
+                model,
+                unifyWeighted: true,
+                ignoreRenderFlag);
+
+        // unifyWeighted false keeps the vertex format and the RMV shader name
+        // strict (the A-only and D-only tiers).
+        private static string GetCrossRigidNoAtlasRmvIdentity(
+            RmvModel model,
+            bool unifyWeighted,
+            bool ignoreRenderFlag)
         {
-            var vertexFormat = model.Material.BinaryVertexFormat ==
+            var vertexFormat = unifyWeighted &&
+                               model.Material.BinaryVertexFormat ==
                                VertexFormat.Cinematic
                 ? VertexFormat.Weighted
                 : model.Material.BinaryVertexFormat;
@@ -538,12 +585,15 @@ namespace Editors.PackOptimizer.Core
             var materialBytes = MaterialFactory.Create().Save(
                 model.CommonHeader.ModelTypeFlag,
                 material);
-            var shaderName = (model.CommonHeader.ShaderParams.ShaderName ??
-                              string.Empty)
-                .Replace(
+            var shaderName = model.CommonHeader.ShaderParams.ShaderName ??
+                             string.Empty;
+            if (unifyWeighted)
+            {
+                shaderName = shaderName.Replace(
                     "weighted2",
                     "weighted4",
                     StringComparison.OrdinalIgnoreCase);
+            }
 
             return ContentHash(
                 string.Join(
@@ -663,7 +713,9 @@ namespace Editors.PackOptimizer.Core
                 var previous = state.CrossRigidBaselineExpectedDrawsByVmd
                     .GetValueOrDefault(vmdPath);
                 var violated = false;
-                foreach (var value in tiers)
+                // The T0..T4 chain only; the no-atlas tiers have their own
+                // self-check (CountCrossRigidNoAtlasInvariantViolations).
+                foreach (var value in tiers.Take(5))
                 {
                     if (value > previous + CrossRigidIdealMergeSelfCheckTolerance)
                         violated = true;
@@ -671,7 +723,8 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 if (tiers.Length != 0 &&
-                    tiers[^1] < -CrossRigidIdealMergeSelfCheckTolerance)
+                    tiers[Math.Min(4, tiers.Length - 1)] <
+                    -CrossRigidIdealMergeSelfCheckTolerance)
                 {
                     violated = true;
                 }
@@ -719,11 +772,14 @@ namespace Editors.PackOptimizer.Core
             for (var tier = 0; tier < CrossRigidIdealMergeTierCount; tier++)
             {
                 var saved = baselineTotal - tierTotals[tier];
+                var aboveT0 = tier == 0
+                    ? string.Empty
+                    : $", above T0={tierTotals[0] - tierTotals[tier]:0.###}";
                 lines.Add(
                     $"  {CrossRigidIdealMergeTierLabels[tier]}: " +
                     $"expected battle draws={tierTotals[tier]:0.###}, " +
                     $"saved vs baseline={saved:0.###} " +
-                    $"({Share(saved):P1})");
+                    $"({Share(saved):P1}){aboveT0}");
             }
 
             lines.Add(
@@ -737,6 +793,15 @@ namespace Editors.PackOptimizer.Core
                 (violations == 0
                     ? "OK"
                     : $"{violations:N0} VMD root(s) violate it"));
+
+            var noAtlasViolations =
+                CountCrossRigidNoAtlasInvariantViolations(state);
+            lines.Add(
+                "  Self-check no-atlas tiers (T0 >= W,A >= WA, " +
+                "T3 <= W, T4 <= WA): " +
+                (noAtlasViolations == 0
+                    ? "OK"
+                    : $"{noAtlasViolations:N0} VMD root(s) violate it"));
 
             var textureCount = state.CrossRigidIdealMergeSharedAtlasTextureCount;
             var sizedCount =
@@ -783,6 +848,8 @@ namespace Editors.PackOptimizer.Core
                 BuildCrossRigidIdealMergePayloadReportLines(
                     state,
                     baselineTotal));
+            lines.AddRange(
+                BuildCrossRigidNoAtlasReportLines(state, baselineTotal));
             return lines.ToArray();
         }
 
@@ -844,6 +911,9 @@ namespace Editors.PackOptimizer.Core
                 new double[scenarioLodIndices.Length];
             public double[] T0SavingByScenarioLod { get; } =
                 new double[scenarioLodIndices.Length];
+
+            // No-atlas rewrite tiers (report only).
+            public CrossRigidNoAtlasPayloadData NoAtlas { get; set; } = null!;
         }
 
         private sealed record CrossRigidIdealMergeContext(
@@ -865,6 +935,8 @@ namespace Editors.PackOptimizer.Core
             public Dictionary<string, long> WsModelGeometryBytes { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, long> WsModelFarGeometryBytes { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, long> WsModelWeighted2ExtraBytes { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<(string WsModelPath, int LodIndex), int>
                 InstanceDraws { get; } = [];
@@ -893,6 +965,7 @@ namespace Editors.PackOptimizer.Core
                 Contexts.Clear();
                 WsModelGeometryBytes.Clear();
                 WsModelFarGeometryBytes.Clear();
+                WsModelWeighted2ExtraBytes.Clear();
                 MaterialTextures.Clear();
                 TextureInfos.Clear();
                 InstanceDraws.Clear();
@@ -1132,6 +1205,10 @@ namespace Editors.PackOptimizer.Core
                         accounting.Payloads[key] = payload;
                     }
 
+                    AccumulateCrossRigidNoAtlasSaving(
+                        payload,
+                        configuration.Probability,
+                        unitWeights);
                     if (!payload.IsPayload)
                         continue;
 
@@ -1188,6 +1265,8 @@ namespace Editors.PackOptimizer.Core
             var saved = new int[scenarioLodIndices.Count];
             var savedT0 = new int[scenarioLodIndices.Count];
             var groupsByLod = new string[scenarioLodIndices.Count][][];
+            var noAtlas = new CrossRigidNoAtlasPayloadData(
+                scenarioLodIndices.Count);
             var qualifyingGroups = new Dictionary<string, string[]>(
                 StringComparer.Ordinal);
             for (var index = 0; index < saved.Length; index++)
@@ -1214,8 +1293,14 @@ namespace Editors.PackOptimizer.Core
                     instances);
                 saved[index] = perInstanceDraws - tierDraws[1];
                 savedT0[index] = perInstanceDraws - tierDraws[0];
-                var lodGroups = GetCrossRigidIdealMergeQualifyingGroups(
-                        BuildCrossRigidIdealMergeParts(state, instances))
+                var lodParts = BuildCrossRigidIdealMergeParts(state, instances);
+                RecordCrossRigidNoAtlasLodData(
+                    noAtlas,
+                    index,
+                    perInstanceDraws,
+                    tierDraws,
+                    lodParts);
+                var lodGroups = GetCrossRigidIdealMergeQualifyingGroups(lodParts)
                     .ToArray();
                 groupsByLod[index] = lodGroups;
                 foreach (var group in lodGroups)
@@ -1224,7 +1309,11 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
-            return new CrossRigidIdealMergePayload(
+            noAtlas.AllWeighted2ExtraBytes = components.Sum(component =>
+                GetCrossRigidNoAtlasComponentWeighted2ExtraBytes(
+                    state,
+                    component));
+            var builtPayload = new CrossRigidIdealMergePayload(
                 key,
                 components.Sum(component =>
                     GetCrossRigidIdealMergeWsModelGeometryBytes(
@@ -1243,6 +1332,8 @@ namespace Editors.PackOptimizer.Core
                         state,
                         component,
                         scenarioLodIndices)));
+            builtPayload.NoAtlas = noAtlas;
+            return builtPayload;
         }
 
         // T1 identity groups holding >= 2 strict (T0) identities: the
