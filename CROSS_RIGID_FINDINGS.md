@@ -1149,3 +1149,58 @@ In-game repeat of the frame-rate test, CPU-bound this time (GPU below 100 %): Re
 Draw calls again cost nothing measurable: 40 extra draws stay within one FPS (about 0.65 ms at 39 FPS, so under roughly 16 us per draw). Parts per soldier cost about 4.4 ms for 9 parts (25.6 -> 21.3 ms, +20 %). On this scene one extra draw is worth at most about 3 % of one part per soldier, so the price is about 0.03 or less; the bench-unit conversion is approximate but any price up to 0.5 gives practically the same output (TEB keeps 106 of 107 payloads at 0.5). Single readings to the nearest FPS, one machine, one unit type.
 
 **Adopted: default `DrawCallPrice = 0`** (cap mode stays available with an explicit `--xr-max-drawcall-increase`). Default output now equals the lambda 0 / uncapped outputs: TEB 107 payloads, 46.392 instance savings, +29.559 expected draws, 596,612,640 bytes; Albion 13 / 6.790 / +3.321 / 672,214,213 bytes. The v48 Albion default bench (`albion-default48`) matches `albion-p0` by sorted file hash (4,816 files), process time 100.6 s. TEB default was not rerun; it uses the same code path as `teb-p0`. 967 focused Debug tests pass; Release bench builds. The extra MISSING_RMV2_TEXTURE warnings return with the default and were checked per path (WHMM `pack validate --baseline <v46 default> --with-vanilla --report`, v48 defaults): TEB +2,291, Albion +312, all on generated `cross_rigid` rigids, no other code changes. Albion's 23 distinct missing textures, and 60 of TEB's 63, are already reported missing on source rigids in the same output. The other three TEB textures (`emp_huntsmarshal_head_01_specular`, `brt_man_at_arms_head_01_specular`, `emp_young_nobles_legs_specular`) come from vanilla sources (`variants4.pack`: `emp_huntsmarshal_head_04`, `brt_men_at_arms_helmet_02`, `emp_young_nobles_legs_01`) whose embedded materials reference the same paths, which exist in no vanilla pack; they are legacy specular slots beside base_colour/material_map. So no generated rigid references a texture its sources do not already miss. Reports: `K:\projects\assedfork-bench\cross-rigid-drawcall-price-20261102\missing-tex`. No WHMM host was built or shipped.
+
+## 2026-11-02: Shared-atlas net cost (report only)
+
+Phase 0 of the cross-rigid shared-atlas idea: a report-only cost model, added under the existing ideal-merge atlas lines for the 64/128/256/512 MiB caps (the unlimited cap repeats the 512 MiB set on both packs). No asset output changes, so OutputVersion stays 48. Code: `PackTextureAtlasBatchService.CrossRigid.IdealMergeNetCost.cs`, hooked in `BuildCrossRigidIdealMergePayloadReportLines`; it sits inside the existing `ReportDiagnostics` gate and a failure only prints "unavailable". Draws are the report's expected-army-draw units (TEB baseline about 1,970, Albion about 1,570, so 50 draws is about 2.5 % of TEB).
+
+How each figure is computed (approximations in brackets):
+- **Eligibility.** The checks of `TryCreateCandidate` that need no geometry write or pixel decode: material readable, no emissive shader or slot, no conflicting duplicate slot, base colour present, resolvable and a sizable BCn DDS, secondary slots resolvable (except the `test_mask` sentinel). Mesh-level rules come from the WSModel usage index (`state.Usages`): a mesh part used with more than one material, a mesh shared with an unresolved gameplay consumer, a rigid also used by a WSModel outside the pack, and no source-pack WSModel user at all. [Not replicated: uniform-constant channel detection, UV0 island preparation, Faction3 mask canonicalisation, other-mod consumer blocks. Constant channels are costed as real textures.] A payload with any ineligible member material is lost, attributed to its alphabetically first ineligible member's reason. Components are rebuilt (union-find) from the remaining payloads only.
+- **Dry run.** `TextureAtlasBuilder.CreatePlan` (padding 8, 4096 page) on the component's distinct base-colour textures; that layout is shared by every channel, and each channel page is the base page scaled by the largest member channel/base resolution ratio. Bytes are full BCn mip chains; BC1 or BC3 per channel through the real format helper and `GetKeepAlphaReasons` (keep-alpha anywhere in the component makes the channel BC3). Inputs are crops from the vanilla-coverage UV0 bounding-rectangle fraction per texture [area-equivalent rectangle with the texture's aspect; union over all parts of the texture, not per part] and, for comparison, full rectangles. A component that does not fit loses all payloads that need it; components with no credited payload are dropped. The cap-level "fit" count is the crop dry run; the full-rect count is in the same line and equal on both packs.
+- **Retirement with closure.** A source-pack texture is retired only when every material in the source pack that names it (all `.xml.material` files scanned, any slot) is an atlased component material, it is named only through AtlasChannels slots, and it is not named by an embedded RMV material or a non-material reference (vanilla-coverage `EmbeddedMaterialsByPart`, `NonMaterialReference`, `OwnedRemovalBlockers`). Textures not in the source pack (vanilla) are never retired and their atlas copies are pure cost. In the curve a texture is retired when the last component that needs it is added. [Other-mod consumers are not modelled; orphan source materials count as users, so retirement is conservative.]
+- **Net** = atlas bytes minus retired source bytes (BCn including mips).
+- **Lost repack.** Sum of `BytesSaved` (crop estimate of the shared repack) of owned repackable textures that are used by a rigid the atlas would change (every rigid with a part using a selected material) and are not retired. This is the per-texture coverage estimate, not the realised repack result, which only exists after this stage; [the estimate is power-of-two-step and ignores set packing].
+- **Curve.** Eligible components that fit are ordered by standalone net bytes per attributed draw (components whose retirement pays for their atlas first, then ascending; a payload needing k components is split 1/k for the order, a shared texture's retirement is split over its components). Replay: each payload counts toward the last of its components added, each retired texture toward the component that completes it, so single points can be lumpy (zero draws, positive cost). "avg" = best cumulative prefix with net/draws at most the limit; "marg" = sum of draws of components whose own marginal net per attributed draw is at most the limit.
+
+TEB (`!ak_teb3.pack`):
+
+| Cap | Draws | Atlas-dependent | Eligible draws | Atlas MiB | Retired MiB | Net MiB | Lost repack MiB | Geometry MiB | Components fit one page |
+|---|---|---|---|---|---|---|---|---|---|
+| 64 | 110.317 | 101.808 | 28.748 | 381.3 | 2.0 | 379.3 | 2.1 | 18.0 | 23 of 23 |
+| 128 | 156.001 | 146.642 | 38.014 | 429.3 | 2.0 | 427.3 | 2.1 | 31.4 | 25 of 25 |
+| 256 | 208.799 | 198.978 | 42.897 | 488.0 | 2.0 | 486.0 | 2.1 | 42.4 | 27 of 27 |
+| 512 = unlimited | 221.402 | 210.895 | 42.897 | 488.0 | 2.0 | 486.0 | 2.1 | 42.4 | 27 of 27 |
+
+Albion (`ovn_albion.pack`):
+
+| Cap | Draws | Atlas-dependent | Eligible draws | Atlas MiB | Retired MiB | Net MiB | Lost repack MiB | Geometry MiB | Components fit one page |
+|---|---|---|---|---|---|---|---|---|---|
+| 64 | 104.884 | 101.683 | 46.07 | 258.7 | 18.8 | 239.8 | 0.5 | 23.2 | 8 of 10 |
+| 128 | 168.53 | 165.33 | 67.243 | 192.0 | 11.7 | 180.3 | 1.1 | 50.7 | 11 of 14 (9 selected) |
+| 256 | 244.338 | 241.138 | 117.44 | 378.7 | 14.7 | 364.0 | 4.0 | 136.7 | 17 of 20 |
+| 512 = unlimited | 326.689 | 323.489 | 161.85 | 397.3 | 16.0 | 381.3 | 4.0 | 267.6 | 18 of 21 |
+
+Losses on TEB at the 256 MiB cap (213 materials, 115 eligible): 156.081 draws of 198.978 are lost to an ineligible member, mostly "mesh part shared by several materials" (51 materials, 127.783 draws) and "no source WSModel user" (46 materials, 27.878 draws); page fit loses nothing (all 27 components fit, largest page 2048x4096). Retirement is tiny because TEB's selected materials mostly name vanilla textures (149 kept vanilla, 14 used outside, 2 retired). On Albion only "secondary texture unresolved" (7 materials, 31.9 draws at 256) plus page fit (91.798 draws) lose draws, and 39 vanilla / 45 used-outside textures stay.
+
+Curve points (cumulative draws / net MiB / geometry MiB):
+- TEB 64: #1 0.755 / 2.0 / 0.0; #4 4.531 / 26.0 / 2.2; #8 9.061 / 74.0 / 5.4; #16 24.862 / 232.0 / 14.8; #23 28.748 / 379.3 / 18.0.
+- TEB 256: #1 0.755 / 2.0 / 0.0; #4 0.755 / 34.0 / 0.0; #8 18.123 / 98.0 / 16.5; #16 28.328 / 203.3 / 27.0; #27 42.897 / 486.0 / 42.4.
+- Albion 256: #1 0 / 18.7 / 0.0; #2 37.59 / 44.3 / 27.4; #4 57.061 / 89.7 / 51.9; #15 117.44 / 364.0 / 136.7.
+- Albion 512: #1 0 / 16.0 / 0.0; #8 110.1 / 219.0 / 181.3; #15 161.85 / 381.3 / 267.6.
+
+Draws reachable at a net texture price (avg / marg):
+
+| Pack, cap | <= 1 MiB | <= 2 MiB | <= 4 MiB | <= 8 MiB |
+|---|---|---|---|---|
+| TEB 64 | 0 / 0 | 0 / 9.061 | 4.531 / 18.123 | 21.506 / 20.137 |
+| TEB 128 | 0 / 0 | 0 / 12.082 | 0.755 / 22.372 | 29.483 / 27.91 |
+| TEB 256 | 0 / 0 | 0 / 12.082 | 0.755 / 22.372 | 30.342 / 34.166 |
+| TEB 512 | 0 / 0 | 0 / 12.082 | 0.755 / 22.372 | 30.342 / 34.166 |
+| Albion 64 | 0 / 23.438 | 26.638 / 23.438 | 45.151 / 41.951 | 46.07 / 45.151 |
+| Albion 128 | 33.173 / 33.173 | 54.17 / 54.17 | 67.243 / 54.17 | 67.243 / 67.243 |
+| Albion 256 | 0 / 37.59 | 57.061 / 78.058 | 117.44 / 100.562 | 117.44 / 117.44 |
+| Albion 512 | 0 / 58.954 | 110.1 / 140.112 | 161.85 / 156.079 | 161.85 / 161.85 |
+
+**Reading: no-go for TEB.** The bar was at least 50 TEB draws at no more than 4 MiB net texture per draw. TEB reaches at most 22.4 draws that way (marginal, caps 128 to 512; 4.5 average at cap 64), and even the whole eligible set is only 42.9 draws at 486 MiB net (11.3 MiB per draw), because about four fifths of the atlas-dependent saving is lost to ineligible members (shared mesh parts, no source user) and almost nothing is retired. Albion alone would pass (117 to 162 draws at 4 MiB, 8 to 19 % of its saving) but TEB is the gate. Stop here per the plan; the Phase 1 pre-pass is not worth building from this evidence unless TEB's "mesh part shared by several materials" blocker is removed first (it is the largest loss: it would need per-material UV0 copies of the shared mesh).
+
+Verification: 979 focused Release tests pass (967 existing plus 12 new in `PackTextureAtlasSharedAtlasNetCostTests`: closure retirement, net-bytes math, fit classification from the dry run, ineligible loss attribution, curve attribution, BC3 keep-alpha, repack loss). Bench defaults (no flags) in `K:\projects\assedfork-bench\xr-shared-atlas-phase0-20261102`: sorted `fingerprint.txt` lines above `== report` are identical to `teb-p0` (6,747 files) and `albion-default48` (4,817 files), and the TEB `bench_output.pack` is byte-identical to `teb-p0`. Process time TEB 143.8 s (reference 170.1 s, contended), Albion 83.3 s (reference 100.6 s); the model's own cost is therefore under the noise of those references (it was not timed separately). No WHMM host was built or shipped.

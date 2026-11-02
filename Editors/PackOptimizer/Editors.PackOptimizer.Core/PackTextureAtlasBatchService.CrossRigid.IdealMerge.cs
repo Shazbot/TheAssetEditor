@@ -862,9 +862,12 @@ namespace Editors.PackOptimizer.Core
                 double.NegativeInfinity;
             public int ExpansionFailureCount { get; set; }
             public int ExpansionLimitFailureCount { get; set; }
+            // Report-only shared-atlas net cost index (built on first use).
+            public CrossRigidSharedAtlasIndex? SharedAtlasIndex { get; set; }
 
             public void Clear()
             {
+                SharedAtlasIndex = null;
                 Payloads.Clear();
                 Contexts.Clear();
                 WsModelGeometryBytes.Clear();
@@ -1357,15 +1360,33 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 previousAtlasKeys = atlasKeys;
+                var atlasPayloads = atlasKeys
+                    .Select(key => accounting.Payloads[key])
+                    .ToArray();
                 lines.AddRange(
                     BuildCrossRigidIdealMergeAtlasLines(
                         AnalyzeCrossRigidIdealMergeAtlas(
                             state,
-                            atlasKeys
-                                .Select(key => accounting.Payloads[key])
-                                .ToArray()),
+                            atlasPayloads),
                         baselineTotal,
                         isTodaysCap));
+                try
+                {
+                    lines.AddRange(
+                        BuildCrossRigidSharedAtlasCostLines(
+                            ComputeCrossRigidSharedAtlasCost(
+                                BuildCrossRigidSharedAtlasCostInput(
+                                    state,
+                                    atlasPayloads)),
+                            baselineTotal));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Report-only diagnostic: never fails the run.
+                    lines.Add(
+                        "        shared-atlas net cost: unavailable (" +
+                        ex.GetType().Name + ": " + ex.Message + ")");
+                }
             }
 
             lines.Add(
