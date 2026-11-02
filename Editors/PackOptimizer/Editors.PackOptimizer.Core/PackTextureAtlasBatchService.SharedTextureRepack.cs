@@ -467,6 +467,12 @@ namespace Editors.PackOptimizer.Core
             // Parts with the same layout map and the same variant maps form a tuple.
             public string TupleKey => FormatSharedRepackSlotMap(Slots) +
                                       string.Concat(VariantSlots.Select(map => "#" + FormatSharedRepackSlotMap(map)));
+            // What parts must share to sit in one tuple when tuples that differ only in their variant maps
+            // are merged (same layout map, copied slots, embedded material and flow compensation).
+            public string LayoutKey => FormatSharedRepackSlotMap(Slots) +
+                                       "|copy:" + string.Join(",", CopySlots.OrderBy(slot => slot, StringComparer.OrdinalIgnoreCase)) +
+                                       $"|direct:{DirectEmbeddedMaterial}:{EmbeddedMaterialType}" +
+                                       $"|flow:{FlowCompensationMaterials.Count != 0}";
         }
 
         private static string FormatSharedRepackSlotMap(IEnumerable<KeyValuePair<string, string>> map)
@@ -876,6 +882,14 @@ namespace Editors.PackOptimizer.Core
             public long? NormalSaving { get; set; }
             public long CopySaving { get; set; }
             public bool CopyWon { get; set; }
+            // Tuples that differ only in their variant maps (same layout map) are one tuple, so the charts
+            // are built from the union of their UV coverage. LayoutMergeable (separate plan): there are
+            // such tuples; the merged plan is built only when it is smaller. LayoutMergeNote: the decision.
+            public bool MergeLayouts { get; init; }
+            public bool LayoutMergeable { get; set; }
+            public bool LayoutMergeWon { get; set; }
+            public long LayoutMergeSaving { get; set; }
+            public string? LayoutMergeNote { get; set; }
             // Why the copy plan failed (null: it was planned).
             public string? CopyFailure { get; set; }
             // Why the merged attempt failed, on the alone retry's context (report only).
@@ -1026,6 +1040,9 @@ namespace Editors.PackOptimizer.Core
             public bool CopyWon { get; set; }
             public long? NormalSaving { get; set; }
             public long CopyGain { get; set; }
+            public string? LayoutMergeNote { get; set; }
+            public bool LayoutMergeWon { get; set; }
+            public long LayoutMergeSaving { get; set; }
             public List<SharedRepackSample> Worst { get; } = [];
         }
 
@@ -2240,7 +2257,11 @@ namespace Editors.PackOptimizer.Core
                 // may merge unprocessed signature sets that share a material with this one; if
                 // a merged attempt fails anywhere, nothing of it was written and the seed is
                 // retried alone, with the joined sets released.
-                SharedRepackMergeContext NewContext(bool allowMerge, bool copyOutside = false, bool copyRemoved = false)
+                SharedRepackMergeContext NewContext(
+                    bool allowMerge,
+                    bool copyOutside = false,
+                    bool copyRemoved = false,
+                    bool mergeLayouts = false)
                 {
                     var context = new SharedRepackMergeContext
                     {
@@ -2248,6 +2269,7 @@ namespace Editors.PackOptimizer.Core
                         Allow = allowMerge,
                         CopyOutside = copyOutside,
                         CopyRemoved = copyRemoved,
+                        MergeLayouts = mergeLayouts,
                         Decisions = decisions,
                         IndexOfSet = indexOfSet,
                         IsAvailable = index => index > decisionIndex && !consumed.ContainsKey(index),
@@ -2272,6 +2294,7 @@ namespace Editors.PackOptimizer.Core
                     var powerOfTwoPacking = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var retryAttempts = 0;
                     var skipCopy = false;
+                    var skipLayoutMerge = false;
 
                     SharedRepackSetPlan? PlanOnce(
                         SharedRepackMergeContext planContext,
@@ -2392,6 +2415,57 @@ namespace Editors.PackOptimizer.Core
                             }
                         }
 
+                        // Layout groups of the same textures: when parts that differ only in their variant maps
+                        // could share one tuple, the set is planned that way too and the plan with the larger
+                        // exact saving (variant pages included) is built (a tie keeps the separate plan). The
+                        // loser's side effects are undone, like the copy plan's.
+                        if (plan != null && !SharedRepackLayoutMergeDisabled && !skipLayoutMerge && context.LayoutMergeable)
+                        {
+                            var afterSeparate = SharedRepackAttemptReportSnapshot.Capture(result);
+                            var separateCharts = SnapshotSharedRepackPartCharts(plan);
+                            var partsBeforeMerge = partCache.Keys.ToHashSet();
+                            var uncheckedBeforeMerge = partCache.Values.Where(part => !part.GeometryChecked).ToList();
+                            reportSnapshot.Restore(result);
+                            var mergedContext = NewContext(allowMerge, copyRemoved: context.CopyRemoved, mergeLayouts: true);
+                            var mergedPlan = PlanOnce(mergedContext, out var mergedFailure, out var mergedBucket);
+                            var separateSaving = GetSharedRepackPlanSaving(plan);
+                            long? mergedSaving = mergedPlan == null ? null : GetSharedRepackPlanSaving(mergedPlan);
+                            if (mergedPlan != null && mergedSaving > separateSaving)
+                            {
+                                mergedContext.LayoutMergeWon = true;
+                                mergedContext.LayoutMergeSaving = mergedSaving.Value - separateSaving;
+                                mergedContext.LayoutMergeNote =
+                                    $"layout groups merged: {plan.Groups.Count:N0} -> {mergedPlan.Groups.Count:N0}, " +
+                                    $"saves {mergedContext.LayoutMergeSaving:N0} bytes " +
+                                    $"({plan.Pages.Sum(page => page.BytesAfter):N0} -> {mergedPlan.Pages.Sum(page => page.BytesAfter):N0} bytes of pages)";
+                                mergedContext.PlannedBothWays = context.PlannedBothWays;
+                                mergedContext.CopyWon = context.CopyWon;
+                                mergedContext.NormalSaving = context.NormalSaving;
+                                mergedContext.CopySaving = context.CopySaving;
+                                mergedContext.CopyFailure = context.CopyFailure;
+                                context = mergedContext;
+                                plan = mergedPlan;
+                            }
+                            else
+                            {
+                                context.LayoutMergeNote = mergedPlan == null
+                                    ? $"layout groups kept separate: the merged layout was not planned ({Shorten(mergedFailure ?? "unknown", 160)})"
+                                    : mergedSaving == separateSaving
+                                        ? "layout groups kept separate: merged is not smaller"
+                                        : $"layout groups kept separate: merged larger by {separateSaving - mergedSaving!.Value:N0} bytes";
+                                afterSeparate.Restore(result);
+                                foreach (var part in uncheckedBeforeMerge.Where(part => part.GeometryChecked))
+                                {
+                                    part.GeometryChecked = false;
+                                    part.Reason = null;
+                                }
+
+                                foreach (var key in partCache.Keys.Where(key => !partsBeforeMerge.Contains(key)).ToList())
+                                    partCache.Remove(key);
+                                RestoreSharedRepackPartCharts(separateCharts);
+                            }
+                        }
+
                         if (plan == null)
                         {
                             FinishRetries(null);
@@ -2458,6 +2532,13 @@ namespace Editors.PackOptimizer.Core
                         if (retried)
                         {
                             retryAttempts++;
+                            continue;
+                        }
+
+                        if (context.LayoutMergeWon)
+                        {
+                            // The merged layout could not be built: plan again with separate layout groups.
+                            skipLayoutMerge = true;
                             continue;
                         }
 
@@ -5767,8 +5848,12 @@ namespace Editors.PackOptimizer.Core
                         entryOf[copied] = copyEntry;
                 }
 
+                merge.LayoutMergeable = !merge.MergeLayouts &&
+                                        moved.GroupBy(part => part.LayoutKey, StringComparer.OrdinalIgnoreCase)
+                                            .Any(group => group.Select(part => part.TupleKey)
+                                                .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1);
                 var tuples = BuildSharedRepackTuples(
-                    moved, entryOf, ClassifyConstant, SetKeyOf, copiedTextures, out var violating);
+                    moved, entryOf, ClassifyConstant, SetKeyOf, copiedTextures, merge.MergeLayouts, out var violating);
                 if (violating.Count != 0)
                 {
                     foreach (var part in violating)
@@ -5811,12 +5896,15 @@ namespace Editors.PackOptimizer.Core
             Func<string, bool?> classifyConstant,
             Func<string, string> setKeyOf,
             HashSet<string> copiedTextures,
+            bool mergeLayouts,
             out List<SharedRepackPart> violating)
         {
             violating = [];
             var tuples = new List<SharedRepackTuple>();
+            // With mergeLayouts, parts with the same layout map form one tuple whatever their variant maps
+            // are: its charts cover the union of their UVs and its variant textures are the union of theirs.
             foreach (var group in moved
-                         .GroupBy(part => part.TupleKey, StringComparer.OrdinalIgnoreCase)
+                         .GroupBy(part => mergeLayouts ? part.LayoutKey : part.TupleKey, StringComparer.OrdinalIgnoreCase)
                          .OrderBy(group => group.Key, StringComparer.Ordinal))
             {
                 var tuple = new SharedRepackTuple
@@ -5882,7 +5970,7 @@ namespace Editors.PackOptimizer.Core
                     tuple.Layouts[slot] = entryOf[texture].Layout!;
                 // The variant textures of the repacked slots (a uniform slot is not in Slots, and the
                 // variant's own material keeps its uniform texture; copy slots have no variants).
-                foreach (var variant in group.First().VariantSlots)
+                foreach (var variant in group.SelectMany(part => part.VariantSlots))
                 {
                     foreach (var (slot, texture) in variant)
                     {
@@ -6554,6 +6642,15 @@ namespace Editors.PackOptimizer.Core
                     var pages = PackSharedRepackGroup(
                         nameRigid, identity, groupTuples, maximumSide, plan.Pages.Count, result.MinimumGroupSavingBytes,
                         out var split, out var excludeTuple, out var excludeReason);
+                    if (excludeTuple == null && merge.MergeLayouts && !SharedRepackForeignVariantPagesFit(pages, entryOf))
+                    {
+                        // The merged page holds the crops of every chart of the merged tuples, so a foreign
+                        // variant page can outgrow the texture it replaces for the units that load only that.
+                        failure = "merged layout: a variant page of a texture other units load is bigger than that texture";
+                        failureBucket = "bytes";
+                        return null;
+                    }
+
                     if (excludeTuple == null && joinedGroup && !AcceptSharedRepackJoinedGroup(pages, separateAfter, entryOf))
                     {
                         foreach (var tuple in groupTuples)
@@ -7616,10 +7713,16 @@ namespace Editors.PackOptimizer.Core
             if (pages.Sum(page => page.BytesAfter) >= separateAfter)
                 return false;
 
-            return pages.All(page => page.Outputs.Where(output => output.IsVariant).All(output =>
+            return SharedRepackForeignVariantPagesFit(pages, entryOf);
+        }
+
+        // No variant page of a foreign texture is bigger than the texture it replaces.
+        private static bool SharedRepackForeignVariantPagesFit(
+            List<SharedRepackPage> pages,
+            Dictionary<string, VanillaCoverageTexture> entryOf)
+            => pages.All(page => page.Outputs.Where(output => output.IsVariant).All(output =>
                 !page.Tuples.Any(tuple => tuple.ForeignVariantTextures.Contains(output.Sources[0])) ||
                 output.Bytes <= entryOf[output.Sources[0]].Layout!.ChainBytes));
-        }
 
         // Variant pages. For a slot where a tuple of the page has variant textures (its parts' other
         // materials name them), each such texture gets one more output with the layout page's size and
@@ -7642,6 +7745,11 @@ namespace Editors.PackOptimizer.Core
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(texture => texture, StringComparer.Ordinal)
                     .ToList();
+                var allTextures = textures.ToList();
+                // A merged tuple can be split over pages: a page only gets the variant pages some part on
+                // it names (every part of an unmerged tuple names all of its tuple's variants).
+                textures.RemoveAll(texture => !page.Parts.Any(part => part.VariantSlots.Any(map =>
+                    map.TryGetValue(slot, out var named) && named.Equals(texture, StringComparison.OrdinalIgnoreCase))));
                 var suffix = Path.GetFileNameWithoutExtension(layoutOutput.Path)
                     .Split("_repack_")[^1];
                 foreach (var texture in textures)
@@ -7672,7 +7780,7 @@ namespace Editors.PackOptimizer.Core
                     page.VariantOutputs[(slot.ToLowerInvariant(), Normalize(texture).ToLowerInvariant())] = output;
                 }
 
-                var variantSet = textures.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var variantSet = allTextures.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var layoutUsed = page.Tuples.Any(tuple =>
                     tuple.Slots.TryGetValue(slot, out var layoutTexture) && !variantSet.Contains(layoutTexture));
                 if (!layoutUsed && !directParts)
@@ -9141,6 +9249,8 @@ namespace Editors.PackOptimizer.Core
         private static bool SharedRepackDirectRigidsDisabled;
         // Test hook: textures that left a plan are never copied (the output of an earlier version).
         private static bool SharedRepackCopyRemovedDisabled;
+        // Test hook: layout groups of the same textures are never merged (the output of an earlier version).
+        private static bool SharedRepackLayoutMergeDisabled;
 
         // What a plan saves, exactly: the chain bytes of the textures it replaces against its pages.
         private static long GetSharedRepackPlanSaving(SharedRepackSetPlan plan)
@@ -10165,6 +10275,9 @@ namespace Editors.PackOptimizer.Core
             built.CopyWon = merge.CopyRemoved && built.RemovedCopies.Count != 0;
             built.NormalSaving = merge.NormalSaving;
             built.CopyGain = built.CopyWon ? built.Before - built.After - (merge.NormalSaving ?? 0) : 0;
+            built.LayoutMergeNote = merge.LayoutMergeNote;
+            built.LayoutMergeWon = merge.LayoutMergeWon;
+            built.LayoutMergeSaving = merge.LayoutMergeSaving;
             result.DeduplicatedOutputs += built.DeduplicatedOutputs;
             result.DeduplicatedBytes += built.DeduplicatedBytes;
             result.EmissiveParts += built.EmissiveParts;
@@ -11931,7 +12044,7 @@ namespace Editors.PackOptimizer.Core
                 "one-cell gutter/current alignment, one-cell gutter/alignment 16, and gutter 8/alignment 8 " +
                 "(coarsest-slot pixels, clamped for the group's downshift), taking the smallest pages; " +
                 $"merged while padded boxes overlap; a group whose pages get smaller with one rectangle per 8-connected " +
-                $"component (tight pieces, same padding and alignment, translated only) uses those instead. Tuples are packed together only inside a layout group (same " +
+                $"component (tight pieces, same padding and alignment, translated only) uses those instead. Parts that differ only in texture variants share one tuple when that is smaller. Tuples are packed together only inside a layout group (same " +
                 $"slots, formats, colour spaces and per-slot size ratios, so nothing is resampled); a group is built " +
                 $"only if it saves at least {result.MinimumGroupSavingBytes:N0} bytes, a group whose charts do not " +
                 $"fit {result.MaximumSide}x{result.MaximumSide} is split into pages (a part's charts stay on one " +
@@ -12136,6 +12249,14 @@ namespace Editors.PackOptimizer.Core
                 $"restriction; {flowBlocked.Sum(pair => pair.Value):N0} part-drop reason(s) specific to flow.");
             foreach (var (reason, count) in flowBlocked)
                 sb.AppendLine($"  {count:N0} x {reason}");
+            var layoutMerged = result.BuiltSets.Where(set => set.LayoutMergeWon).ToList();
+            sb.AppendLine(
+                "Same-texture layout groups: parts with the same layout map whose bound materials differ only in " +
+                "texture variants are one tuple when that is smaller (charts from the union of their UV coverage, " +
+                "one page set, variant pages only for the parts that name them); each such set is planned both " +
+                "ways and the plan with the smaller exact bytes is built (a tie keeps separate layout groups). " +
+                $"{result.Outcomes.Count(outcome => outcome.Context?.LayoutMergeNote != null):N0} set(s) planned both ways; " +
+                $"merged in {layoutMerged.Count:N0} (saved {layoutMerged.Sum(set => set.LayoutMergeSaving):N0} bytes).");
             var copyWon = result.BuiltSets.Where(set => set.CopyWon).ToList();
             sb.AppendLine(
                 "Copies of textures that left a plan: a texture that left a set only because a dropped part still needs " +
@@ -12285,6 +12406,8 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine(
                     $"    bytes (actual) {set.Before:N0} -> {set.After:N0}, saves {FormatSignedBytes(set.Before - set.After)} " +
                     $"(estimate said {FormatSignedBytes(set.EstimatedSaving)}); {set.Pages:N0} page(s)");
+                if (set.LayoutMergeNote != null)
+                    sb.AppendLine($"    {set.LayoutMergeNote}");
                 if (set.DeduplicatedOutputs != 0)
                 {
                     sb.AppendLine(

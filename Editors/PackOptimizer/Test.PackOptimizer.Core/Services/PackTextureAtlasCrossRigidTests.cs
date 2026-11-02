@@ -13913,7 +13913,9 @@ oatlas_{index}.wsmodel",
         // rigid 2's part has bb and bn too, and unit B binds it with the base colour bv instead. So bb is
         // loaded by unit A, bv by unit B and bn by both: bv is a variant texture of another signature set
         // than the layout texture bb, and the two parts are tuples that differ only in that variant.
-        private static (SrWorld World, Func<RmvFile> First, Func<RmvFile> Second) BuildBarbuteSrWorld()
+        private static (SrWorld World, Func<RmvFile> First, Func<RmvFile> Second) BuildBarbuteSrWorld(
+            (int X, int Y)[]? firstBlocks = null,
+            (int X, int Y)[]? secondBlocks = null)
         {
             var world = new SrWorld();
             world.AddTexture("textures\\sr_bb.dds", 1024, "BC1", true, 1);
@@ -13925,8 +13927,8 @@ oatlas_{index}.wsmodel",
             world.Fixture.AddMaterial(mx, (SrBase, "textures\\sr_bb.dds"), (SrNormal, "textures\\sr_bn.dds"));
             world.Fixture.AddMaterial(my, (SrBase, "textures\\sr_bb.dds"), (SrNormal, "textures\\sr_bn.dds"));
             world.Fixture.AddMaterial(myv, (SrBase, "textures\\sr_bv.dds"), (SrNormal, "textures\\sr_bn.dds"));
-            var first = SrRigidFactory([(mx, SrBlocks((2, 3), (3, 3)))]);
-            var second = SrRigidFactory([(my, SrBlocks((10, 4)))]);
+            var first = SrRigidFactory([(mx, SrBlocks(firstBlocks ?? [(2, 3), (3, 3)]))]);
+            var second = SrRigidFactory([(my, SrBlocks(secondBlocks ?? [(10, 4)]))]);
             world.AddModel(SrRigid, SrWs, SrRoot, first, [[mx]]);
             world.AddModel(SrRigid2, SrWs2, SrRoot, second, [[my]]);
             world.Fixture.AddText(SrWsB, CreateWsModelDocument(SrRigid2, [[myv]]).OuterXml);
@@ -13972,6 +13974,89 @@ oatlas_{index}.wsmodel",
             Assert.That(replaced, Does.Contain("sr_bb.dds").And.Contain("sr_bv.dds").And.Contain("sr_bn.dds"));
             Assert.That(SrValidate(world), Is.Empty);
             Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        private static IDisposable LayoutMergeDisabled()
+        {
+            var field = GetServiceType().GetField("SharedRepackLayoutMergeDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            field.SetValue(null, true);
+            return new ActionDisposable(() => field.SetValue(null, false));
+        }
+
+        private static string? SrLayoutMergeNote(object built) => Get<string?>(built, "LayoutMergeNote");
+
+        [Test]
+        public void SharedRepack_SameTextureTuples_WithOverlappingUv_ShareOneLayoutAndTheVariantPagesOnlyServeTheirParts()
+        {
+            // Both parts show (2,3)/(3,3); the second one shows (4,3) as well. Unit B binds the second part's
+            // material with another base colour (bv).
+            var (world, first, second) = BuildBarbuteSrWorld(
+                [(2, 3), (3, 3), (4, 3)], [(2, 3), (3, 3), (4, 3), (5, 3)]);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            Assert.That(SrLayoutMergeNote(built), Does.StartWith("layout groups merged:"));
+            Assert.That(Get<bool>(built, "LayoutMergeWon"), Is.True);
+            Assert.That(Get<IEnumerable>(built, "Groups").Cast<object>().Count(), Is.EqualTo(1));
+            Assert.That(Get<IEnumerable>(built, "Groups").Cast<object>().Single().ToString(), Is.Not.Null);
+            // One chart (the union of both parts' coverage) on one page set: base, normal, one variant base.
+            Assert.That(Get<int>(built, "Charts"), Is.EqualTo(1));
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(outputs, Has.Count.EqualTo(3));
+            Assert.That(Get<int>(built, "VariantOutputs"), Is.EqualTo(1));
+
+            // Plain parts (unit A) reference the layout base page, the variant binding the variant page.
+            var baseA1 = SrWsTexture(world, SrWs, 0, SrBase);
+            var baseA2 = SrWsTexture(world, SrWs2, 0, SrBase);
+            var baseB = SrWsTexture(world, SrWsB, 0, SrBase);
+            Assert.That(baseA1, Is.EqualTo(baseA2));
+            Assert.That(baseB, Is.Not.EqualTo(baseA1));
+            Assert.That(SrWsTexture(world, SrWsB, 0, SrNormal), Is.EqualTo(SrWsTexture(world, SrWs, 0, SrNormal)));
+
+            // UVs and pixels: each material shows exactly its own texture's crops.
+            AssertSrPixels(world, SrRigid, SrWs, first, new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            AssertSrPixels(world, SrRigid2, SrWs2, second, new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            AssertSrPixels(world, SrRigid2, SrWsB, second, new Dictionary<string, int> { [SrBase] = 8, [SrNormal] = 2 });
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("layout groups merged:"));
+
+            // Not merged (earlier version): more bytes.
+            var (separateWorld, _, _) = BuildBarbuteSrWorld(
+                [(2, 3), (3, 3), (4, 3)], [(2, 3), (3, 3), (4, 3), (5, 3)]);
+            using var disabled = LayoutMergeDisabled();
+            var separate = separateWorld.Run();
+            var separateBuilt = SrBuilt(separate).Single();
+            Assert.That(SrLayoutMergeNote(separateBuilt), Is.Null);
+            Assert.That(Get<long>(built, "After"), Is.LessThan(Get<long>(separateBuilt, "After")));
+        }
+
+        [Test]
+        public void SharedRepack_SameTextureTuples_WithDisjointUv_KeepSeparateLayoutWhenMergingIsNotSmaller()
+        {
+            var (world, first, second) = BuildBarbuteSrWorld();
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<bool>(built, "LayoutMergeWon"), Is.False);
+            Assert.That(SrLayoutMergeNote(built), Does.StartWith("layout groups kept separate:"));
+            AssertSrPixels(world, SrRigid2, SrWsB, second, new Dictionary<string, int> { [SrBase] = 8, [SrNormal] = 2 });
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_UnrelatedGroups_HaveNoLayoutMergeDecision()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(SrLayoutMergeNote(SrBuilt(result).Single()), Is.Null);
         }
 
         private static readonly Dictionary<string, int> SrBigSeeds = new() { [SrBase] = 1 };
@@ -17847,9 +17932,9 @@ oatlas_{index}.wsmodel",
                 StringComparer.OrdinalIgnoreCase)!;
             foreach (var (path, entry) in entries)
                 entryDictionary[path] = entry;
-            var arguments = new object?[] { partList, entryDictionary, classify, (Func<string, string>)(texture => "set:" + texture), copied ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase), null };
+            var arguments = new object?[] { partList, entryDictionary, classify, (Func<string, string>)(texture => "set:" + texture), copied ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase), false, null };
             var tuples = ((IEnumerable)GetStaticMethod("BuildSharedRepackTuples").Invoke(null, arguments)!).Cast<object>().ToList();
-            violating = ((IEnumerable)arguments[5]!).Cast<object>().ToList();
+            violating = ((IEnumerable)arguments[6]!).Cast<object>().ToList();
             return tuples;
         }
 
@@ -20309,6 +20394,8 @@ oatlas_{index}.wsmodel",
             [47] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
             // 48: the default switches to draw-call price 0 (cap mode only on request); the pinned stage fixture does not run selection.
             [48] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 49: layout groups of the same textures that differ only in texture variants share one layout when that is smaller; the pinned stages do not include shared-repack output, so this is unchanged.
+            [49] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()
