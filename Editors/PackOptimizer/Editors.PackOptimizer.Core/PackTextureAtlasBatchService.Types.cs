@@ -415,7 +415,16 @@ namespace Editors.PackOptimizer.Core
             double Limit,
             CrossRigidExpectedDrawCallDrop[] DroppedPayloads,
             double InstanceDrawsGivenUp,
-            CrossRigidExpectedDrawCallPortfolioSearchReport PortfolioSearch);
+            CrossRigidExpectedDrawCallPortfolioSearchReport PortfolioSearch,
+            double? DrawCallPrice = null,
+            bool PriceIsInfinite = false,
+            CrossRigidDrawCallFrontierStep[]? Frontier = null);
+
+        private sealed record CrossRigidDrawCallFrontierStep(
+            int SelectedCount,
+            double Delta,
+            double RetainedSaving,
+            long GeneratedGeometryBytes);
 
         private sealed record CrossRigidExpectedDrawCallPortfolioSearchReport(
             double IncumbentObjective,
@@ -582,7 +591,9 @@ namespace Editors.PackOptimizer.Core
             double ExpectedResidentGeneratedGeometryBytes,
             double PhysicalBytesPerExpectedDraw,
             double ResidentBytesPerExpectedDraw,
-            int SelectionRank)
+            int SelectionRank,
+            // Resident probability x expected generated mesh parts; only computed in draw-call price mode.
+            double ExpectedGeneratedDrawCalls = 0)
         {
             public bool Accepted =>
                 Decision == CrossRigidPayloadSelectionDecision.Accept;

@@ -14,10 +14,40 @@ namespace Editors.PackOptimizer.Core
         double MinimumSingleVmdExpectedArmyDraw = 0.02,
         double PerPayloadCostCeilingMultiplier = 1.0,
         int MaxJointStateCombinations = 4096,
-        double MaxExpectedDrawCallIncrease = 0)
+        double MaxExpectedDrawCallIncrease = 0,
+        // Price mode: objective = instance saving - DrawCallPrice * expected distinct-draw increase.
+        // null = cap mode (MaxExpectedDrawCallIncrease). +infinity behaves like cap 0 without portfolio search.
+        double? DrawCallPrice = null,
+        // Records the removal frontier (selected count, draw delta, retained saving) in the report.
+        bool TraceDrawCallFrontier = false)
     {
+        /// <summary>The finite price when price mode orders and prunes by net value; otherwise null.</summary>
+        public double? FiniteDrawCallPrice =>
+            DrawCallPrice.HasValue && !double.IsPositiveInfinity(DrawCallPrice.Value)
+                ? DrawCallPrice
+                : null;
+
         public void Validate()
         {
+            if (DrawCallPrice.HasValue)
+            {
+                var price = DrawCallPrice.Value;
+                if (double.IsNaN(price) || double.IsNegativeInfinity(price) || price < 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(DrawCallPrice),
+                        price,
+                        "The cross-rigid draw-call price must be nonnegative, finite, or positive infinity.");
+                }
+
+                if (MaxExpectedDrawCallIncrease != 0)
+                {
+                    throw new ArgumentException(
+                        "The cross-rigid draw-call price and an explicit expected draw-call increase cap are mutually exclusive.",
+                        nameof(DrawCallPrice));
+                }
+            }
+
             if (double.IsNaN(MaxExpectedDrawCallIncrease) ||
                 double.IsNegativeInfinity(MaxExpectedDrawCallIncrease) ||
                 MaxExpectedDrawCallIncrease < 0)

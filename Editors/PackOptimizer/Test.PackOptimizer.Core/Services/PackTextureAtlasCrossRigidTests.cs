@@ -20075,6 +20075,8 @@ namespace Test.PackOptimizer.Core
             [45] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
             // 46: iterative cross-rigid portfolio search combines feasible proposals; the pinned stage fixture does not run selection.
             [46] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 47: draw-call price mode (opt-in); the default cap-0 path and the pinned stage fixture do not change
+            [47] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()
@@ -20739,6 +20741,151 @@ namespace Test.PackOptimizer.Core
                     state,
                     "CrossRigidSelectedJointCoverageFractionByRewriteOccurrenceKey")[occurrenceKey],
                 Is.EqualTo(0.25).Within(1e-9));
+        }
+
+        private static (HashSet<string> SelectedPayloadIds, string[] DroppedPayloadIds, double InstanceDrawsGivenUp, double Delta)
+            PruneDrawCallPayloadsByPriceForTest(
+                IEnumerable<string> selectedPayloadIds,
+                double price,
+                IReadOnlyDictionary<string, double> drawsSaved,
+                Func<IReadOnlySet<string>, double> evaluateDelta)
+        {
+            var result = GetStaticMethod("PruneCrossRigidPayloadsByDrawCallPrice")
+                .Invoke(null, [selectedPayloadIds, price, drawsSaved, evaluateDelta]);
+            return ((HashSet<string>, string[], double, double))result!;
+        }
+
+        // Additive deltas: a=+2 (saves 1.0), b=+0.5 (saves 1.0), c=-0.5 (saves 0.2).
+        private static double AdditiveDelta(IReadOnlySet<string> selected)
+            => (selected.Contains("a") ? 2.0 : 0) +
+               (selected.Contains("b") ? 0.5 : 0) +
+               (selected.Contains("c") ? -0.5 : 0);
+
+        private static readonly Dictionary<string, double> AdditiveSavings = new(StringComparer.Ordinal)
+        {
+            ["a"] = 1.0,
+            ["b"] = 1.0,
+            ["c"] = 0.2,
+        };
+
+        [Test]
+        public void DrawCallPrice_ZeroKeepsEverythingTheInfinityCapKeeps()
+        {
+            var ids = new[] { "a", "b", "c" };
+            var price = PruneDrawCallPayloadsByPriceForTest(ids, 0, AdditiveSavings, AdditiveDelta);
+            var infinityCap = PruneDrawCallPayloadsForTest(ids, double.PositiveInfinity, AdditiveSavings, AdditiveDelta);
+
+            Assert.That(price.SelectedPayloadIds, Is.EquivalentTo(infinityCap.SelectedPayloadIds));
+            Assert.That(price.DroppedPayloadIds, Is.Empty);
+            Assert.That(price.Delta, Is.EqualTo(2.0));
+        }
+
+        [Test]
+        public void DrawCallPrice_PrunesNetNegativePayloadsAndKeepsNetPositive()
+        {
+            // lambda=1: a nets 1-2=-1 (dropped), b nets 1-0.5=+0.5 (kept), c nets 0.2+0.5=+0.7 (kept).
+            var result = PruneDrawCallPayloadsByPriceForTest(["a", "b", "c"], 1.0, AdditiveSavings, AdditiveDelta);
+
+            Assert.That(result.SelectedPayloadIds, Is.EquivalentTo(new[] { "b", "c" }));
+            Assert.That(result.DroppedPayloadIds, Is.EqualTo(new[] { "a" }));
+            Assert.That(result.InstanceDrawsGivenUp, Is.EqualTo(1.0));
+            Assert.That(result.Delta, Is.EqualTo(0.0).Within(1e-9));
+        }
+
+        [Test]
+        public void DrawCallPrice_HigherPriceDropsMoreAndKeepsBreakEvenPayload()
+        {
+            // At lambda=2 b nets 1-1=0 (break-even, kept, within epsilon); a nets -3 (dropped).
+            var result = PruneDrawCallPayloadsByPriceForTest(["a", "b", "c"], 2.0, AdditiveSavings, AdditiveDelta);
+            Assert.That(result.SelectedPayloadIds, Is.EquivalentTo(new[] { "b", "c" }));
+
+            // At lambda=3 b nets 1-1.5=-0.5 and is dropped too; c (a retirement credit) always stays.
+            result = PruneDrawCallPayloadsByPriceForTest(["a", "b", "c"], 3.0, AdditiveSavings, AdditiveDelta);
+            Assert.That(result.SelectedPayloadIds, Is.EquivalentTo(new[] { "c" }));
+            Assert.That(result.DroppedPayloadIds, Is.EqualTo(new[] { "a", "b" }));
+        }
+
+        [Test]
+        public void DrawCallPrice_RepricesInteractingRemovalsAfterEachDrop()
+        {
+            // a and b together retire a shared source: alone each adds 1.5, together they add 0.
+            // Individually a nets 1-1.5 < 0 only once b is gone; with both kept each nets +1 (delta 0 vs 1.5 without).
+            double Delta(IReadOnlySet<string> selected)
+            {
+                if (selected.Contains("a") && selected.Contains("b")) return 0.0;
+                if (selected.Contains("a") || selected.Contains("b")) return 1.5;
+                return 0.0;
+            }
+
+            var savings = new Dictionary<string, double>(StringComparer.Ordinal) { ["a"] = 1.0, ["b"] = 0.4 };
+            // Kept as a pair: removing b raises delta by 1.5 -> marginal -1.5 (net = 0.4 + 1.5 > 0).
+            var kept = PruneDrawCallPayloadsByPriceForTest(["a", "b"], 1.0, savings, Delta);
+            Assert.That(kept.SelectedPayloadIds, Is.EquivalentTo(new[] { "a", "b" }));
+
+            // A third payload that breaks the cover: with c selected the pair no longer retires the source.
+            double DeltaWithBreaker(IReadOnlySet<string> selected)
+            {
+                var pair = selected.Contains("a") && selected.Contains("b") && !selected.Contains("c");
+                var generated = (selected.Contains("a") ? 1.5 : 0) + (selected.Contains("b") ? 1.5 : 0);
+                return pair ? 0.0 : generated + (selected.Contains("c") ? 2.0 : 0);
+            }
+
+            savings["c"] = 0.1;
+            var result = PruneDrawCallPayloadsByPriceForTest(["a", "b", "c"], 1.0, savings, DeltaWithBreaker);
+            // c is dropped first (worst net); the pair then retires and both stay.
+            Assert.That(result.DroppedPayloadIds, Is.EqualTo(new[] { "c" }));
+            Assert.That(result.SelectedPayloadIds, Is.EquivalentTo(new[] { "a", "b" }));
+            Assert.That(result.Delta, Is.EqualTo(0.0));
+        }
+
+        [Test]
+        public void DrawCallPrice_TieBreaksByPayloadIdOrdinal()
+        {
+            double Delta(IReadOnlySet<string> selected) => selected.Count * 1.0;
+            var savings = new Dictionary<string, double>(StringComparer.Ordinal) { ["b"] = 0.0, ["a"] = 0.0 };
+            var result = PruneDrawCallPayloadsByPriceForTest(["b", "a"], 1.0, savings, Delta);
+            Assert.That(result.DroppedPayloadIds, Is.EqualTo(new[] { "a", "b" }));
+        }
+
+        [Test]
+        public void DrawCallFrontier_RecordsRemovalOrderToEmptyWithMonotoneRetainedSaving()
+        {
+            var bytes = new Dictionary<string, long>(StringComparer.Ordinal) { ["a"] = 10, ["b"] = 20, ["c"] = 30 };
+            Func<IReadOnlySet<string>, double> evaluate = AdditiveDelta;
+            var steps = (Array)GetStaticMethod("TraceCrossRigidDrawCallFrontier")
+                .Invoke(null, [new[] { "a", "b", "c" }, AdditiveSavings, bytes, evaluate])!;
+            var counts = new List<int>();
+            var deltas = new List<double>();
+            var savings = new List<double>();
+            var geometry = new List<long>();
+            foreach (var step in steps)
+            {
+                counts.Add(Get<int>(step, "SelectedCount"));
+                deltas.Add(Get<double>(step, "Delta"));
+                savings.Add(Get<double>(step, "RetainedSaving"));
+                geometry.Add(Get<long>(step, "GeneratedGeometryBytes"));
+            }
+
+            Assert.That(counts, Is.EqualTo(new[] { 3, 2, 1, 0 }));
+            // Highest marginal delta per saving goes first: a (2.0), then b (0.5), then c.
+            Assert.That(deltas[0], Is.EqualTo(2.0));
+            Assert.That(deltas[1], Is.EqualTo(0.0).Within(1e-9));
+            Assert.That(deltas[3], Is.EqualTo(0.0));
+            Assert.That(savings, Is.EqualTo(new[] { 2.2, 1.2, 0.2, 0.0 }).Within(1e-9));
+            Assert.That(geometry, Is.EqualTo(new long[] { 60, 50, 30, 0 }));
+            // Retained saving is non-increasing; the draw delta is not monotone when a payload has a retirement credit.
+            for (var i = 1; i < savings.Count; i++)
+                Assert.That(savings[i], Is.LessThanOrEqualTo(savings[i - 1]));
+        }
+
+        [Test]
+        public void DrawCallPrice_SettingsOrderingUsesNetNumeratorOnlyInPriceMode()
+        {
+            var finite = CrossRigidBudgetSettings.Default with { DrawCallPrice = 1.0 };
+            var infinite = CrossRigidBudgetSettings.Default with { DrawCallPrice = double.PositiveInfinity };
+            Assert.That(finite.FiniteDrawCallPrice, Is.EqualTo(1.0));
+            Assert.That(infinite.FiniteDrawCallPrice, Is.Null);
+            Assert.That(CrossRigidBudgetSettings.Default.FiniteDrawCallPrice, Is.Null);
         }
 
         [Test]

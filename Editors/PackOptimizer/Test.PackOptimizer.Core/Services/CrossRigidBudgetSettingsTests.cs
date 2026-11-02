@@ -38,6 +38,44 @@ namespace Test.PackOptimizer.Core.Services
             }).Validate();
         }
 
+        [Test]
+        public void DefaultsAreCapModeWithNoPriceOrFrontier()
+        {
+            var defaults = CrossRigidBudgetSettings.Default;
+            Assert.That(defaults.DrawCallPrice, Is.Null);
+            Assert.That(defaults.FiniteDrawCallPrice, Is.Null);
+            Assert.That(defaults.TraceDrawCallFrontier, Is.False);
+        }
+
+        [TestCase(0.0)]
+        [TestCase(0.5)]
+        [TestCase(double.PositiveInfinity)]
+        public void Validate_AcceptsDrawCallPrices(double price)
+        {
+            (CrossRigidBudgetSettings.Default with { DrawCallPrice = price }).Validate();
+        }
+
+        [TestCase(double.NaN)]
+        [TestCase(double.NegativeInfinity)]
+        [TestCase(-0.1)]
+        public void Validate_RejectsInvalidDrawCallPrices(double price)
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                (CrossRigidBudgetSettings.Default with { DrawCallPrice = price }).Validate());
+        }
+
+        [TestCase(1.0)]
+        [TestCase(double.PositiveInfinity)]
+        public void Validate_RejectsPriceCombinedWithExplicitCap(double cap)
+        {
+            Assert.Throws<ArgumentException>(() =>
+                (CrossRigidBudgetSettings.Default with
+                {
+                    DrawCallPrice = 1.0,
+                    MaxExpectedDrawCallIncrease = cap,
+                }).Validate());
+        }
+
         [TestCase(double.NaN)]
         [TestCase(double.NegativeInfinity)]
         [TestCase(-1.0)]

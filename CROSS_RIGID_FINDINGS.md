@@ -1106,3 +1106,31 @@ Optimization processing times from the saved wall_time.txt files:
 | Albion | 91.4 s | 87.2 s | 98.1 s | -4.2 s / +6.7 s |
 
 TEB shows a small consistent overhead in these observations. Albion varies too much to establish a slowdown. These were not controlled repeated timing trials, and the three improvements were not measured separately. The case for dropping them was added code/search work without a measured output gain, not a large proven timing penalty; the user's decision is to retain them. Existing 751 passing tests, successful Release build, asset-identity checks, and WHMM validation remain the verification record; this retention note changes no implementation.
+
+
+## 2026-11-02: Draw-call price mode (OutputVersion 47)
+
+Added an opt-in price mode to the draw-call gate: `CrossRigidBudgetSettings.DrawCallPrice` (lambda, instance savings per expected distinct draw; null = cap mode, the default, unchanged). Objective = instance saving - lambda * delta draws. Candidate ordering uses numerator `ExpectedArmyDrawCallsEliminated - lambda * (resident probability * expected generated mesh parts)`, so net-negative candidates sort last and are not hard-rejected. The prune repeatedly removes the selected payload with the lowest net marginal value `saving - lambda * (delta - deltaWithout)` while it is below -epsilon (ties by payload id, retirement recomputed by the existing evaluator on every trial). Price mode enforces no cap and skips the portfolio search. `lambda=inf` equals cap 0 without search; setting a price together with a nonzero cap is rejected by `Validate()`. Bench: `--xr-drawcall-price <x|inf>` (mutually exclusive with `--xr-max-drawcall-increase`), `--xr-drawcall-frontier true` (report table of selected count, delta, retained saving and generated MiB from the full selection to empty in cost-per-saving order; any mode). Defaults are byte-identical to v46; the version bump only expires caches (golden hash unchanged).
+
+Same inputs/options as the v46 section. Artifacts: `K:\projects\assedfork-bench\cross-rigid-drawcall-price-20261102` (`results.md`). Both packs' runs executed concurrently, so times are contended single observations.
+
+| Pack / mode | Payloads kept | Instance saving | Delta draws | Pack bytes | Process s |
+|---|---:|---:|---:|---:|---:|
+| TEB default | 1 | 1.528 | 0 | 533,477,400 | 248.9 |
+| TEB lambda 0 | 107 | 46.392 | +29.559 | 596,612,640 | 170.1 |
+| TEB lambda 0.5 | 106 | 46.369 | +29.494 | 596,527,837 | 165.6 |
+| TEB lambda 1 | 68 | 37.370 | +15.912 | 575,695,177 | 160.2 |
+| TEB lambda 2 | 56 | 32.381 | +11.899 | 566,147,737 | 148.9 |
+| TEB lambda inf | 0 | 0 | 0 | 533,153,267 | 148.2 |
+| Albion default | 4 | 0.705 | -0.026 | 662,875,878 | 172.0 |
+| Albion lambda 0 | 13 | 6.790 | +3.321 | 672,214,213 | 99.0 |
+| Albion lambda 0.5 | 13 | 6.790 | +3.321 | 672,214,213 | 108.3 |
+| Albion lambda 1 | 7 | 4.771 | +0.921 | 665,071,638 | 95.7 |
+| Albion lambda 2 | 5 | 3.906 | +0.259 | 663,187,074 | 101.8 |
+| Albion lambda inf | 4 | 0.705 | -0.026 | 662,875,878 | 98.6 |
+
+Defaults match the v46 final default assets (TEB 4,476 files, Albion 4,678); lambda 0 matches the v46 infinity outputs (6,746 / 4,816) by sorted file hash. Albion lambda inf equals its default; TEB lambda inf lacks the search's one payload (same bytes as v44 default).
+
+Frontier summary (delta draws / retained saving): TEB 107 payloads 29.559/46.392; 67: 15.653/37.088; 51: 10.955/30.479; 33: 6.085/19.742; 19: 2.876/9.505; 1: 0.065/1.259. Albion 13: 3.321/6.790; 9: 1.914/5.636; 7: 0.921/4.771; 5: 0.259/3.906; 4: -0.026/0.705; 3: 0.046/0.529. Retained saving is monotone by construction; delta draws is not (Albion 5 -> 4 payloads lowers delta to -0.026 through source retirement, then 3 payloads rises again). The knee is steep: Albion keeps 58% of its saving at +0.259 draws, and TEB 66% at +11.9 draws, versus 0.705 (10%) and 0 for the hard cap. Whether those draws cost anything in game is the earlier A/B question; this only exposes the price.
+
+WHMM validation of lambda 1 against the v46 default (`--baseline --with-vanilla --format json`): valid=true, validationComplete=false (existing coverage gaps unchanged), regressed=true on both. The only added diagnostics are MISSING_RMV2_TEXTURE warnings (TEB +1,233 added / 4 resolved, Albion +64) on generated `cross_rigid` rigids copying embedded material metadata already missing in their sources (same mechanism as the v45 TEB case). No other code changed. Tests: 791 focused Debug tests pass (cross-rigid, budget settings, retirement, golden v47); Release bench builds with 0 errors. No WHMM host rebuild.

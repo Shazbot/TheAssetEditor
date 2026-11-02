@@ -18,7 +18,7 @@ using Shared.Core.Settings;
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked:cap2,0.08:free:attr0.5:bone0.5:cap2] [--army-scope culture|subculture] [--sibling-scope model|pack]
-//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--xr-max-drawcall-increase N|inf] [--lod-weights w0,w1,w2,w3] [--xr-joint-cap N]
+//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--xr-max-drawcall-increase N|inf] [--xr-drawcall-price X|inf] [--xr-drawcall-frontier true] [--lod-weights w0,w1,w2,w3] [--xr-joint-cap N]
 //                      [--repack-min-set-kib N] [--repack-min-group-kib N]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
@@ -183,6 +183,17 @@ internal static class Program
             return double.Parse(text, CultureInfo.InvariantCulture);
         }
 
+        double? XrDrawCallPrice()
+        {
+            if (!options.TryGetValue("xr-drawcall-price", out var text))
+                return null;
+            if (options.ContainsKey("xr-max-drawcall-increase"))
+                throw new ArgumentException("--xr-drawcall-price and --xr-max-drawcall-increase are mutually exclusive.");
+            return text.Equals("inf", StringComparison.OrdinalIgnoreCase)
+                ? double.PositiveInfinity
+                : double.Parse(text, CultureInfo.InvariantCulture);
+        }
+
         CrossRigidBudgetSettings.Current = xrDefaults with
         {
             GeneratedGeometryBytesPerExpectedArmyDraw = (long)(XrDouble("xr-physical-mib-per-draw", xrDefaults.GeneratedGeometryBytesPerExpectedArmyDraw / 1048576.0) * 1048576.0),
@@ -191,12 +202,15 @@ internal static class Program
             MinimumSingleVmdExpectedArmyDraw = XrDouble("xr-min-single-vmd-draws", xrDefaults.MinimumSingleVmdExpectedArmyDraw),
             MaxJointStateCombinations = (int)XrDouble("xr-joint-cap", xrDefaults.MaxJointStateCombinations),
             MaxExpectedDrawCallIncrease = XrMaxExpectedDrawCallIncrease(),
+            DrawCallPrice = XrDrawCallPrice(),
+            TraceDrawCallFrontier = options.TryGetValue("xr-drawcall-frontier", out var frontierText) &&
+                                    bool.Parse(frontierText),
         };
         try
         {
             CrossRigidBudgetSettings.Current.Validate();
         }
-        catch (ArgumentOutOfRangeException exception)
+        catch (ArgumentException exception)
         {
             Console.Error.WriteLine(exception.Message);
             return 2;

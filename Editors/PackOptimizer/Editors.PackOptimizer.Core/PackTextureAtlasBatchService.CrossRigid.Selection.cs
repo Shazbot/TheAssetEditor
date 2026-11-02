@@ -165,6 +165,26 @@ namespace Editors.PackOptimizer.Core
                             .SingleVmdBenefitTooSmall;
                 }
 
+                var generatedDrawTerm = 0.0;
+                var drawCallPrice = CrossRigidBudgetSettings.Current.FiniteDrawCallPrice;
+                if (drawCallPrice.HasValue &&
+                    state.ArmyResidencyModel != null &&
+                    decision == CrossRigidPayloadSelectionDecision.Accept)
+                {
+                    var residentProbability = isPrimary
+                        ? CalculateExpectedCrossRigidPayloadResidentProbability(
+                            state,
+                            primaryPlans)
+                        : payload.GeneratedGeometryBytes > 0
+                            ? payload.ExpectedResidentGeneratedGeometryBytes /
+                              payload.GeneratedGeometryBytes
+                            : 0;
+                    generatedDrawTerm = residentProbability *
+                        GetExpectedCrossRigidGeneratedMeshParts(
+                            payload.Lods,
+                            state.ArmyResidencyModel.Scenario.LodDistribution);
+                }
+
                 var maxRawDrawsSavedPerState =
                     payload.Lods
                         .Where(lod =>
@@ -185,7 +205,8 @@ namespace Editors.PackOptimizer.Core
                     expectedResidentBytes,
                     physicalBytesPerExpectedDraw,
                     residentBytesPerExpectedDraw,
-                    0);
+                    0,
+                    generatedDrawTerm);
 
                 if (decision ==
                     CrossRigidPayloadSelectionDecision.Accept)
@@ -198,6 +219,7 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            var orderPrice = CrossRigidBudgetSettings.Current.FiniteDrawCallPrice;
             var orderedCandidates =
                 selectionCandidates
                     // Optimize the expected benefit of the competing rewrite
@@ -207,7 +229,10 @@ namespace Editors.PackOptimizer.Core
                     // and resident payload costs by their respective budgets before
                     // comparing the benefit of mutually competing payloads.
                     .OrderByDescending(entry =>
-                        entry.ExpectedArmyDrawCallsEliminated /
+                        (orderPrice.HasValue
+                            ? entry.ExpectedArmyDrawCallsEliminated -
+                              orderPrice.Value * entry.ExpectedGeneratedDrawCalls
+                            : entry.ExpectedArmyDrawCallsEliminated) /
                         Math.Max(
                             1.0,
                             Math.Max(

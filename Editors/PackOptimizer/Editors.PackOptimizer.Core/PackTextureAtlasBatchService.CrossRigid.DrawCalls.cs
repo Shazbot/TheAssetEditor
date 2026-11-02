@@ -54,7 +54,12 @@ namespace Editors.PackOptimizer.Core
         {
             var settings = CrossRigidBudgetSettings.Current;
             settings.Validate();
-            var limit = settings.MaxExpectedDrawCallIncrease;
+            var price = settings.FiniteDrawCallPrice;
+            var priceIsInfinite = settings.DrawCallPrice.HasValue && !price.HasValue;
+            // Finite price mode enforces no cap and skips the portfolio search.
+            var limit = price.HasValue
+                ? double.PositiveInfinity
+                : settings.MaxExpectedDrawCallIncrease;
             var selectedPayloadIds = state.CrossRigidSelectedPayloadIds
                 .ToHashSet(StringComparer.Ordinal);
             var originallySelectedPayloadIds =
@@ -76,15 +81,41 @@ namespace Editors.PackOptimizer.Core
                 selectedPayloadIds,
                 context);
 
-            var selection = PruneCrossRigidPayloadsToDrawCallIncreaseLimit(
-                selectedPayloadIds,
-                limit,
-                instanceDrawsSavedByPayload,
-                selected => EvaluateCrossRigidDrawCallTotals(
+            Func<IReadOnlySet<string>, double> evaluateDeltaForPrune = selected =>
+                EvaluateCrossRigidDrawCallTotals(
                     state,
                     selected,
                     context,
-                    drawCallTerms).Delta);
+                    drawCallTerms).Delta;
+            CrossRigidDrawCallFrontierStep[]? frontier = null;
+            if (settings.TraceDrawCallFrontier)
+            {
+                var geometryBytesByPayload = state.CrossRigidPayloadSelectionEntries
+                    .Where(entry => entry.Accepted &&
+                                    selectedPayloadIds.Contains(entry.GeneratedPayloadId))
+                    .GroupBy(entry => entry.GeneratedPayloadId, StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Last().GeneratedGeometryBytes,
+                        StringComparer.Ordinal);
+                frontier = TraceCrossRigidDrawCallFrontier(
+                    selectedPayloadIds,
+                    instanceDrawsSavedByPayload,
+                    geometryBytesByPayload,
+                    evaluateDeltaForPrune);
+            }
+
+            var selection = price.HasValue
+                ? PruneCrossRigidPayloadsByDrawCallPrice(
+                    selectedPayloadIds,
+                    price.Value,
+                    instanceDrawsSavedByPayload,
+                    evaluateDeltaForPrune)
+                : PruneCrossRigidPayloadsToDrawCallIncreaseLimit(
+                    selectedPayloadIds,
+                    priceIsInfinite ? 0 : limit,
+                    instanceDrawsSavedByPayload,
+                    evaluateDeltaForPrune);
 
             foreach (var payloadId in selection.DroppedPayloadIds)
                 RejectCrossRigidPayloadForDrawCallIncrease(state, payloadId);
@@ -101,7 +132,7 @@ namespace Editors.PackOptimizer.Core
                 CaptureCrossRigidDrawCallPortfolioState(state);
             var portfolioSearch = OptimizeCrossRigidPortfolioAfterDrawCallGate(
                 state,
-                limit,
+                priceIsInfinite ? double.PositiveInfinity : limit,
                 postPruneEvaluation.Delta,
                 state.CrossRigidDrawCallPortfolioSearchContext);
 
@@ -184,7 +215,10 @@ namespace Editors.PackOptimizer.Core
                     limit,
                     droppedPayloads,
                     droppedPayloads.Sum(drop => drop.InstanceDrawsGivenUp),
-                    portfolioSearch);
+                    portfolioSearch,
+                    settings.DrawCallPrice,
+                    priceIsInfinite,
+                    frontier);
             state.CrossRigidDrawCallPortfolioSearchContext = null;
         }
 
@@ -1766,6 +1800,110 @@ namespace Editors.PackOptimizer.Core
             return (selected, dropped.ToArray(), drawsGivenUp, delta);
         }
 
+        private static (HashSet<string> SelectedPayloadIds, string[] DroppedPayloadIds, double InstanceDrawsGivenUp, double Delta)
+            PruneCrossRigidPayloadsByDrawCallPrice(
+                IEnumerable<string> selectedPayloadIds,
+                double price,
+                IReadOnlyDictionary<string, double> instanceDrawsSavedByPayload,
+                Func<IReadOnlySet<string>, double> evaluateDelta)
+        {
+            if (double.IsNaN(price) || double.IsInfinity(price) || price < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(price),
+                    price,
+                    "The cross-rigid draw-call price must be nonnegative and finite.");
+            }
+
+            var selected = selectedPayloadIds.ToHashSet(StringComparer.Ordinal);
+            var dropped = new List<string>();
+            double drawsGivenUp = 0;
+            var delta = evaluateDelta(selected);
+            if (double.IsNaN(delta))
+                throw new InvalidOperationException("Cross-rigid expected draw-call evaluation returned NaN.");
+
+            // Remove the payload with the lowest net marginal value (saving - price * marginal
+            // draw increase) while it is negative. Retirement is recomputed by the evaluator for
+            // every trial, so interacting payloads are repriced after each removal.
+            while (selected.Count != 0)
+            {
+                var worst = selected.Select(payloadId =>
+                {
+                    var withoutPayload = selected
+                        .Where(id => !id.Equals(payloadId, StringComparison.Ordinal))
+                        .ToHashSet(StringComparer.Ordinal);
+                    var deltaWithoutPayload = evaluateDelta(withoutPayload);
+                    var saving = instanceDrawsSavedByPayload.GetValueOrDefault(payloadId);
+                    var net = saving - price * (delta - deltaWithoutPayload);
+                    if (double.IsNaN(net))
+                        net = double.NegativeInfinity;
+                    return (PayloadId: payloadId, DeltaWithout: deltaWithoutPayload, DrawsSaved: saving, Net: net);
+                })
+                .OrderBy(candidate => candidate.Net)
+                .ThenBy(candidate => candidate.PayloadId, StringComparer.Ordinal)
+                .First();
+
+                if (!(worst.Net < -AtlasValueGateExpectedDrawEpsilon))
+                    break;
+
+                selected.Remove(worst.PayloadId);
+                dropped.Add(worst.PayloadId);
+                drawsGivenUp += worst.DrawsSaved;
+                delta = worst.DeltaWithout;
+            }
+
+            return (selected, dropped.ToArray(), drawsGivenUp, delta);
+        }
+
+        /// <summary>
+        /// Records (selected count, draw delta, retained saving, generated bytes) while removing payloads
+        /// in the cap-mode order (highest marginal draw increase per instance saving first) down to empty.
+        /// </summary>
+        private static CrossRigidDrawCallFrontierStep[] TraceCrossRigidDrawCallFrontier(
+            IEnumerable<string> selectedPayloadIds,
+            IReadOnlyDictionary<string, double> instanceDrawsSavedByPayload,
+            IReadOnlyDictionary<string, long> geometryBytesByPayload,
+            Func<IReadOnlySet<string>, double> evaluateDelta)
+        {
+            var selected = selectedPayloadIds.ToHashSet(StringComparer.Ordinal);
+            var steps = new List<CrossRigidDrawCallFrontierStep>();
+            var delta = evaluateDelta(selected);
+            var saving = selected.Sum(id => instanceDrawsSavedByPayload.GetValueOrDefault(id));
+            var bytes = selected.Sum(id => geometryBytesByPayload.GetValueOrDefault(id));
+            steps.Add(new CrossRigidDrawCallFrontierStep(selected.Count, delta, saving, bytes));
+            while (selected.Count != 0)
+            {
+                var next = selected.Select(payloadId =>
+                {
+                    var withoutPayload = selected
+                        .Where(id => !id.Equals(payloadId, StringComparison.Ordinal))
+                        .ToHashSet(StringComparer.Ordinal);
+                    var deltaWithout = evaluateDelta(withoutPayload);
+                    var drawsSaved = instanceDrawsSavedByPayload.GetValueOrDefault(payloadId);
+                    var score = drawsSaved <= AtlasValueGateExpectedDrawEpsilon
+                        ? double.PositiveInfinity
+                        : (delta - deltaWithout) / drawsSaved;
+                    if (double.IsNaN(score))
+                        score = double.PositiveInfinity;
+                    return (PayloadId: payloadId, DeltaWithout: deltaWithout, DrawsSaved: drawsSaved, Score: score);
+                })
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenBy(candidate => candidate.PayloadId, StringComparer.Ordinal)
+                .First();
+                selected.Remove(next.PayloadId);
+                delta = next.DeltaWithout;
+                saving -= next.DrawsSaved;
+                bytes -= geometryBytesByPayload.GetValueOrDefault(next.PayloadId);
+                steps.Add(new CrossRigidDrawCallFrontierStep(
+                    selected.Count,
+                    delta,
+                    selected.Count == 0 ? 0 : saving,
+                    bytes));
+            }
+
+            return steps.ToArray();
+        }
+
         private static void AppendCrossRigidExpectedBattleDrawCallReport(
             StringBuilder sb,
             BatchState state)
@@ -1785,10 +1923,30 @@ namespace Editors.PackOptimizer.Core
                 $"Expected draws before={FormatExpectedDrawCallNumber(evaluation.Before)}, " +
                 $"after={FormatExpectedDrawCallNumber(evaluation.After)}, " +
                 $"Δ={FormatExpectedDrawCallNumber(evaluation.Delta)}; " +
-                $"maximum increase={FormatExpectedDrawCallNumber(report.Limit)}.");
+                (report.DrawCallPrice.HasValue
+                    ? (report.PriceIsInfinite
+                        ? "mode=price (lambda=inf, equivalent to cap 0, no portfolio search)."
+                        : $"mode=price (lambda={FormatExpectedDrawCallNumber(report.DrawCallPrice.Value)} instance savings per expected draw, no cap, no portfolio search).")
+                    : $"mode=cap, maximum increase={FormatExpectedDrawCallNumber(report.Limit)}."));
             sb.AppendLine(
                 $"Payloads dropped by the gate: {report.DroppedPayloads.Length:N0}; " +
                 $"instance draws given up: {FormatExpectedDrawCallNumber(report.InstanceDrawsGivenUp)}");
+            if (report.Frontier is { Length: > 0 } frontierSteps)
+            {
+                sb.AppendLine("Draw-call frontier (removal in cost-per-saving order; selected, expected draw delta, retained instance saving, generated MiB):");
+                var stride = Math.Max(1, frontierSteps.Length / 40);
+                for (var i = 0; i < frontierSteps.Length; i++)
+                {
+                    if (i % stride != 0 && i != frontierSteps.Length - 1)
+                        continue;
+                    var step = frontierSteps[i];
+                    sb.AppendLine(
+                        $"  n={step.SelectedCount}, delta={FormatExpectedDrawCallNumber(step.Delta)}, " +
+                        $"saving={FormatExpectedDrawCallNumber(step.RetainedSaving)}, " +
+                        $"genMiB={(step.GeneratedGeometryBytes / (1024.0 * 1024.0)).ToString("0.##", CultureInfo.InvariantCulture)}");
+                }
+            }
+
             var portfolioSearch = report.PortfolioSearch;
             var trialsByRound = portfolioSearch.TrialsByRound.Length == 0
                 ? "(none)"
