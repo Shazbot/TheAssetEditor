@@ -25,6 +25,7 @@ namespace Test.PackOptimizer.Core.Services
         {
             (CrossRigidBudgetSettings.Default with
             {
+                DrawCallPrice = null,
                 MaxExpectedDrawCallIncrease = limit,
             }).Validate();
         }
@@ -34,16 +35,19 @@ namespace Test.PackOptimizer.Core.Services
         {
             (CrossRigidBudgetSettings.Default with
             {
+                DrawCallPrice = null,
                 MaxExpectedDrawCallIncrease = double.PositiveInfinity,
             }).Validate();
         }
 
         [Test]
-        public void DefaultsAreCapModeWithNoPriceOrFrontier()
+        public void DefaultsArePriceZeroWithNoFrontier()
         {
             var defaults = CrossRigidBudgetSettings.Default;
-            Assert.That(defaults.DrawCallPrice, Is.Null);
-            Assert.That(defaults.FiniteDrawCallPrice, Is.Null);
+            Assert.That(defaults.DrawCallPrice, Is.EqualTo(0.0));
+            Assert.That(defaults.FiniteDrawCallPrice, Is.EqualTo(0.0));
+            Assert.That(defaults.MaxExpectedDrawCallIncrease, Is.EqualTo(0.0));
+            Assert.DoesNotThrow(defaults.Validate);
             Assert.That(defaults.TraceDrawCallFrontier, Is.False);
         }
 
@@ -84,6 +88,7 @@ namespace Test.PackOptimizer.Core.Services
             Assert.Throws<ArgumentOutOfRangeException>(() =>
                 (CrossRigidBudgetSettings.Default with
                 {
+                    DrawCallPrice = null,
                     MaxExpectedDrawCallIncrease = limit,
                 }).Validate());
         }

@@ -20077,6 +20077,8 @@ namespace Test.PackOptimizer.Core
             [46] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
             // 47: draw-call price mode (opt-in); the default cap-0 path and the pinned stage fixture do not change
             [47] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
+            // 48: the default switches to draw-call price 0 (cap mode only on request); the pinned stage fixture does not run selection.
+            [48] = "16AFD48B29182B062A5395A8C9533AB89D5C5CD76D4E463392A3B16202ADEC9B",
         };
 
         private static string ComputeOutputGoldenHash()
@@ -20606,6 +20608,7 @@ namespace Test.PackOptimizer.Core
             {
                 CrossRigidBudgetSettings.Current = previous with
                 {
+                    DrawCallPrice = null,
                     MaxExpectedDrawCallIncrease = limit,
                 };
                 GetStaticMethod("ApplyCrossRigidExpectedDrawCallIncreaseGate")
@@ -20885,7 +20888,7 @@ namespace Test.PackOptimizer.Core
             var infinite = CrossRigidBudgetSettings.Default with { DrawCallPrice = double.PositiveInfinity };
             Assert.That(finite.FiniteDrawCallPrice, Is.EqualTo(1.0));
             Assert.That(infinite.FiniteDrawCallPrice, Is.Null);
-            Assert.That(CrossRigidBudgetSettings.Default.FiniteDrawCallPrice, Is.Null);
+            Assert.That(CrossRigidBudgetSettings.Default.FiniteDrawCallPrice, Is.EqualTo(0.0));
         }
 
         [Test]

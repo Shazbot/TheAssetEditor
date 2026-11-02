@@ -17,7 +17,9 @@ namespace Editors.PackOptimizer.Core
         double MaxExpectedDrawCallIncrease = 0,
         // Price mode: objective = instance saving - DrawCallPrice * expected distinct-draw increase.
         // null = cap mode (MaxExpectedDrawCallIncrease). +infinity behaves like cap 0 without portfolio search.
-        double? DrawCallPrice = null,
+        // 0 since output 48: the CPU-bound in-game A/B (10 vs 50 draws, same parts) showed no FPS change,
+        // while parts per soldier cost ~20 % (CROSS_RIGID_FINDINGS.md, 2026-11-02).
+        double? DrawCallPrice = 0,
         // Records the removal frontier (selected count, draw delta, retained saving) in the report.
         bool TraceDrawCallFrontier = false)
     {

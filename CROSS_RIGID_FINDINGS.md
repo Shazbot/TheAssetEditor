@@ -1134,3 +1134,18 @@ Defaults match the v46 final default assets (TEB 4,476 files, Albion 4,678); lam
 Frontier summary (delta draws / retained saving): TEB 107 payloads 29.559/46.392; 67: 15.653/37.088; 51: 10.955/30.479; 33: 6.085/19.742; 19: 2.876/9.505; 1: 0.065/1.259. Albion 13: 3.321/6.790; 9: 1.914/5.636; 7: 0.921/4.771; 5: 0.259/3.906; 4: -0.026/0.705; 3: 0.046/0.529. Retained saving is monotone by construction; delta draws is not (Albion 5 -> 4 payloads lowers delta to -0.026 through source retirement, then 3 payloads rises again). The knee is steep: Albion keeps 58% of its saving at +0.259 draws, and TEB 66% at +11.9 draws, versus 0.705 (10%) and 0 for the hard cap. Whether those draws cost anything in game is the earlier A/B question; this only exposes the price.
 
 WHMM validation of lambda 1 against the v46 default (`--baseline --with-vanilla --format json`): valid=true, validationComplete=false (existing coverage gaps unchanged), regressed=true on both. The only added diagnostics are MISSING_RMV2_TEXTURE warnings (TEB +1,233 added / 4 resolved, Albion +64) on generated `cross_rigid` rigids copying embedded material metadata already missing in their sources (same mechanism as the v45 TEB case). No other code changed. Tests: 791 focused Debug tests pass (cross-rigid, budget settings, retirement, golden v47); Release bench builds with 0 errors. No WHMM host rebuild.
+
+## 2026-11-02: CPU-bound draw-call A/B; default draw-call price 0 (OutputVersion 48)
+
+In-game repeat of the frame-rate test, CPU-bound this time (GPU below 100 %): Republican Guard units stacked on one spot with the camera close (`K:\projects\assedfork-bench\ab-test\ab_stack_units.lua`), `!ak_teb3.pack` plus one of `!!!teb_a`-`d`.
+
+| Variant | Parts per soldier | Draw calls | FPS |
+|---|---|---|---|
+| A | 10 | 10 | about 39 |
+| C | 10 | 50 | about 39 |
+| B | 1 | 1 | about 47 |
+| D | 1 | 5 | about 47 |
+
+Draw calls again cost nothing measurable: 40 extra draws stay within one FPS (about 0.65 ms at 39 FPS, so under roughly 16 us per draw). Parts per soldier cost about 4.4 ms for 9 parts (25.6 -> 21.3 ms, +20 %). On this scene one extra draw is worth at most about 3 % of one part per soldier, so the price is about 0.03 or less; the bench-unit conversion is approximate but any price up to 0.5 gives practically the same output (TEB keeps 106 of 107 payloads at 0.5). Single readings to the nearest FPS, one machine, one unit type.
+
+**Adopted: default `DrawCallPrice = 0`** (cap mode stays available with an explicit `--xr-max-drawcall-increase`). Default output now equals the lambda 0 / uncapped outputs: TEB 107 payloads, 46.392 instance savings, +29.559 expected draws, 596,612,640 bytes; Albion 13 / 6.790 / +3.321 / 672,214,213 bytes. The v48 Albion default bench (`albion-default48`) matches `albion-p0` by sorted file hash (4,816 files), process time 100.6 s. TEB default was not rerun; it uses the same code path as `teb-p0`. 967 focused Debug tests pass; Release bench builds. The extra MISSING_RMV2_TEXTURE warnings on generated rigids (previous section) return with the default; they are copied source material metadata, as in the v44 infinity runs, but were not re-checked per path. No WHMM host was built or shipped.

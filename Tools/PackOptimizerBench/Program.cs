@@ -185,8 +185,9 @@ internal static class Program
 
         double? XrDrawCallPrice()
         {
+            // An explicit cap selects cap mode, overriding the default price.
             if (!options.TryGetValue("xr-drawcall-price", out var text))
-                return null;
+                return options.ContainsKey("xr-max-drawcall-increase") ? null : xrDefaults.DrawCallPrice;
             if (options.ContainsKey("xr-max-drawcall-increase"))
                 throw new ArgumentException("--xr-drawcall-price and --xr-max-drawcall-increase are mutually exclusive.");
             return text.Equals("inf", StringComparison.OrdinalIgnoreCase)
