@@ -14059,6 +14059,53 @@ oatlas_{index}.wsmodel",
             Assert.That(SrLayoutMergeNote(SrBuilt(result).Single()), Is.Null);
         }
 
+        private static object SrGroupInfo(long after, string[] copied, params (string Slot, string Texture)[] slots)
+        {
+            var info = Activator.CreateInstance(GetNestedType("SharedRepackGroupInfo"))!;
+            var slotMap = (IDictionary)Get<object>(info, "SlotTextures");
+            foreach (var (slot, texture) in slots)
+                slotMap[slot] = texture;
+            var copiedSet = Get<HashSet<string>>(info, "CopiedSlots");
+            foreach (var slot in copied)
+                copiedSet.Add(slot);
+            info.GetType().GetProperty("After")!.SetValue(info, after);
+            info.GetType().GetProperty("Label")!.SetValue(info, "group");
+            return info;
+        }
+
+        private static List<(string Reason, long Bytes)> SrDuplicates(string? note, params object[] groups)
+        {
+            var list = (IList)Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(GetNestedType("SharedRepackGroupInfo")))!;
+            foreach (var group in groups)
+                list.Add(group);
+            var found = (IEnumerable)GetStaticMethod("FindSharedRepackDuplicateGroups").Invoke(null, ["set", list, note])!;
+            return found.Cast<object>().Select(item => (Get<string>(item, "Reason"), Get<long>(item, "Bytes"))).ToList();
+        }
+
+        [Test]
+        public void SharedRepack_DuplicateGroupReport_ClassifiesSlotSetDifferenceAndMergeOutcome()
+        {
+            var baseSlots = new[] { (SrBase, "a.dds"), (SrNormal, "n.dds") };
+            var big = SrGroupInfo(2_000, [], baseSlots);
+            // An extra copied slot: the groups share every non-copied source texture.
+            var withCopy = SrGroupInfo(900, ["t_xml_dissolve_map"], baseSlots.Append(("t_xml_dissolve_map", "d.dds")).ToArray());
+            var slotSet = SrDuplicates(null, big, withCopy);
+            Assert.That(slotSet, Has.Count.EqualTo(1));
+            Assert.That(slotSet[0].Reason, Is.EqualTo("different slot set (extra: t_xml_dissolve_map)"));
+            Assert.That(slotSet[0].Bytes, Is.EqualTo(900));
+
+            var same = SrGroupInfo(700, [], baseSlots);
+            Assert.That(SrDuplicates("layout groups kept separate: merged larger by 5 bytes", big, same).Single().Reason, Is.EqualTo("merge larger"));
+            Assert.That(SrDuplicates("layout groups kept separate: the merged layout was not planned (x)", big, same).Single().Reason, Is.EqualTo("merge failed/unplannable"));
+            Assert.That(SrDuplicates("layout groups kept separate: the merged layout was not planned (a variant page of)", big, same).Single().Reason, Is.EqualTo("foreign variant page too large"));
+            Assert.That(SrDuplicates(null, big, same).Single().Reason, Is.EqualTo("other key difference"));
+
+            // Other textures: not duplicates.
+            var other = SrGroupInfo(700, [], (SrBase, "b.dds"), (SrNormal, "n.dds"));
+            Assert.That(SrDuplicates(null, big, other), Is.Empty);
+        }
+
         private static readonly Dictionary<string, int> SrBigSeeds = new() { [SrBase] = 1 };
 
         // One 2048 x 2048 base colour used by two parts in separate regions: part 0 shows

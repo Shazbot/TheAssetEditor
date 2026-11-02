@@ -698,6 +698,66 @@ namespace Editors.PackOptimizer.Core
             public bool MaskPackingRetry { get; set; }
             public string Status { get; set; } = "built";
             public string Sizes { get; set; } = string.Empty;
+            // Report only: slot -> source texture of the group's first tuple, and the slots copied (not replaced).
+            public SortedDictionary<string, string> SlotTextures { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> CopiedSlots { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        // Report only: a layout group that has the same source texture in every non-copied slot as a bigger
+        // one of the same set, and why the two stayed separate.
+        private sealed record SharedRepackDuplicateGroup(
+            string Set, string Group, string Reason, long Bytes, long OtherBytes);
+
+        private static List<SharedRepackDuplicateGroup> FindSharedRepackDuplicateGroups(
+            string setLabel,
+            IReadOnlyList<SharedRepackGroupInfo> groups,
+            string? mergeNote)
+        {
+            var found = new List<SharedRepackDuplicateGroup>();
+            var built = groups.Where(group => group.SlotTextures.Count != 0 && group.After > 0).ToList();
+            string SourceKey(SharedRepackGroupInfo group) => string.Join(
+                ";", group.SlotTextures.Where(pair => !group.CopiedSlots.Contains(pair.Key))
+                    .Select(pair => $"{pair.Key}={Normalize(pair.Value).ToLowerInvariant()}"));
+            foreach (var same in built.GroupBy(SourceKey, StringComparer.Ordinal).Where(group => group.Key.Length != 0 && group.Count() > 1))
+            {
+                var ordered = same.OrderByDescending(group => group.After).ToList();
+                foreach (var smaller in ordered.Skip(1))
+                {
+                    var larger = ordered[0];
+                    var smallerSlots = smaller.SlotTextures.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var largerSlots = larger.SlotTextures.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    string reason;
+                    if (!smallerSlots.SetEquals(largerSlots))
+                    {
+                        var extra = smallerSlots.Except(largerSlots, StringComparer.OrdinalIgnoreCase)
+                            .Concat(largerSlots.Except(smallerSlots, StringComparer.OrdinalIgnoreCase))
+                            .OrderBy(slot => slot, StringComparer.Ordinal);
+                        reason = "different slot set (extra: " + string.Join(", ", extra) + ")";
+                    }
+                    else
+                    {
+                        reason = ClassifySharedRepackKeptSeparate(mergeNote);
+                    }
+
+                    found.Add(new(setLabel, smaller.Label, reason, smaller.After, larger.After));
+                }
+            }
+
+            return found;
+        }
+
+        // Why same-slot-set groups were not merged, from the layout merge decision of the set.
+        private static string ClassifySharedRepackKeptSeparate(string? note)
+        {
+            if (note == null)
+                return "other key difference";
+            if (note.Contains("merged larger", StringComparison.Ordinal) || note.Contains("not smaller", StringComparison.Ordinal))
+                return "merge larger";
+            if (note.Contains("variant page", StringComparison.Ordinal))
+                return "foreign variant page too large";
+            if (note.Contains("not planned", StringComparison.Ordinal))
+                return "merge failed/unplannable";
+            return "other key difference";
         }
 
         // How the page choice of one layout group went: the single-page layout, the clusters,
@@ -6692,6 +6752,9 @@ namespace Editors.PackOptimizer.Core
                         (groupTuples.Count > 2 ? $" (+{groupTuples.Count - 2:N0} tuple(s))" : string.Empty));
                     var info = new SharedRepackGroupInfo
                     {
+                        SlotTextures = new SortedDictionary<string, string>(
+                            groupTuples[0].Slots, StringComparer.OrdinalIgnoreCase),
+                        CopiedSlots = groupTuples[0].CopySlots.ToHashSet(StringComparer.OrdinalIgnoreCase),
                         GroupKey = group.Key,
                         Sizes = DescribeSharedRepackSizes(groupTuples, pages),
                         Label = string.Join(" | ", groupTuples.Take(2).Select(DescribeSharedRepackTuple)) +
@@ -12250,6 +12313,17 @@ namespace Editors.PackOptimizer.Core
             foreach (var (reason, count) in flowBlocked)
                 sb.AppendLine($"  {count:N0} x {reason}");
             var layoutMerged = result.BuiltSets.Where(set => set.LayoutMergeWon).ToList();
+            var duplicateGroups = result.BuiltSets
+                .SelectMany(set => FindSharedRepackDuplicateGroups(set.Label, set.Groups, set.LayoutMergeNote))
+                .ToList();
+            sb.AppendLine(
+                $"Duplicate layout groups that stayed separate (same source texture in every non-copied slot, one set): " +
+                $"{duplicateGroups.Count:N0}, {duplicateGroups.Sum(item => item.Bytes):N0} bytes in the smaller groups" +
+                (duplicateGroups.Count == 0
+                    ? "."
+                    : "; by reason: " + string.Join("; ", duplicateGroups.GroupBy(item => item.Reason.Split(" (")[0])
+                        .OrderByDescending(group => group.Sum(item => item.Bytes))
+                        .Select(group => $"{group.Key} {group.Count():N0} ({group.Sum(item => item.Bytes):N0} bytes)")) + "."));
             sb.AppendLine(
                 "Same-texture layout groups: parts with the same layout map whose bound materials differ only in " +
                 "texture variants are one tuple when that is smaller (charts from the union of their UV coverage, " +
@@ -12420,6 +12494,13 @@ namespace Editors.PackOptimizer.Core
                     sb.AppendLine(
                         $"    variant pages: {set.VariantOutputs:N0} output(s), {set.VariantBytes:N0} bytes, " +
                         $"parts with variants {set.VariantParts:N0}; {set.VariantSamples:N0} pixel-checked sample(s)");
+                }
+
+                foreach (var duplicate in FindSharedRepackDuplicateGroups(set.Label, set.Groups, set.LayoutMergeNote))
+                {
+                    sb.AppendLine(
+                        $"    duplicate layout group stayed separate: set {Shorten(duplicate.Set, 80)}, group {duplicate.Group}: {duplicate.Reason}, " +
+                        $"{duplicate.Bytes:N0} bytes (the other group {duplicate.OtherBytes:N0})");
                 }
 
                 foreach (var group in set.Groups)
