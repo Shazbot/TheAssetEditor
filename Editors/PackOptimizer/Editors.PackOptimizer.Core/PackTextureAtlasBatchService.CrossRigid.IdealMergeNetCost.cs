@@ -53,6 +53,9 @@ namespace Editors.PackOptimizer.Core
         private const string SharedAtlasReasonImmutableRigid =
             "rigid used outside the source pack";
 
+        private const string SharedAtlasReasonTiledUv =
+            "base colour UV0 tiles";
+
         private const string SharedAtlasBlockVanilla = "vanilla";
         private const string SharedAtlasBlockExternal = "external reference";
 
@@ -100,7 +103,13 @@ namespace Editors.PackOptimizer.Core
             Func<string, string?> GetTextureBlockReason,
             Func<string, IReadOnlyCollection<string>> GetMaterialRigids,
             // null = coverage analysis not available
-            IReadOnlyList<SharedAtlasRepackTexture>? RepackTextures);
+            IReadOnlyList<SharedAtlasRepackTexture>? RepackTextures,
+            // Phase 0b: source texture mip the atlas is built from (every
+            // source and crop size is divided by 2^MipShift, padding stays).
+            int MipShift = 0,
+            // Phase 0b: the atlas lives only in a generated payload, source
+            // textures stay untouched: nothing is retired, no repack is lost.
+            bool GeneratedOnly = false);
 
         internal sealed record SharedAtlasComponentCost(
             string[] Materials,
@@ -110,7 +119,8 @@ namespace Editors.PackOptimizer.Core
             int PageHeight,
             long AtlasBytes,
             long AtlasBytesFullRect,
-            int ChannelCount);
+            int ChannelCount,
+            int SubBlockCrops = 0);
 
         internal sealed record SharedAtlasCurvePoint(
             int Rank,
@@ -154,7 +164,10 @@ namespace Editors.PackOptimizer.Core
             long? LostRepackBytes,
             long GeometryBytes,
             IReadOnlyList<SharedAtlasCurvePoint> Curve,
-            IReadOnlyList<SharedAtlasReachable> Reachable);
+            IReadOnlyList<SharedAtlasReachable> Reachable,
+            int SubBlockCropCount = 0,
+            int MedianPageWidth = 0,
+            int MedianPageHeight = 0);
 
         // ---- Pure dry-run pack ----
 
@@ -252,16 +265,40 @@ namespace Editors.PackOptimizer.Core
                     materials, false, false, 0, 0, 0, 0, 0);
             }
 
+            var subBlockCrops = 0;
             (bool Fits, int Width, int Height) Plan(bool crop)
-                => TryPlanCrossRigidSharedAtlasPage(
+            {
+                var counted = 0;
+                var result = TryPlanCrossRigidSharedAtlasPage(
                     sized.Select((item, index) =>
                     {
                         var size = GetCrossRigidSharedAtlasCrop(
                             item.Info!,
                             crop);
-                        return (index, item.Info!.Width, item.Info.Height,
-                            size.Width, size.Height);
+                        var width = ShiftCrossRigidSharedAtlasSize(
+                            item.Info!.Width,
+                            input.MipShift);
+                        var height = ShiftCrossRigidSharedAtlasSize(
+                            item.Info.Height,
+                            input.MipShift);
+                        var cropWidth = Math.Min(
+                            width,
+                            ShiftCrossRigidSharedAtlasSize(
+                                size.Width,
+                                input.MipShift));
+                        var cropHeight = Math.Min(
+                            height,
+                            ShiftCrossRigidSharedAtlasSize(
+                                size.Height,
+                                input.MipShift));
+                        if (cropWidth < 4 || cropHeight < 4)
+                            counted++;
+                        return (index, width, height, cropWidth, cropHeight);
                     }).ToArray());
+                if (crop)
+                    subBlockCrops = counted;
+                return result;
+            }
 
             var primary = Plan(true);
             var full = Plan(false);
@@ -310,12 +347,21 @@ namespace Editors.PackOptimizer.Core
                             (double)channelInfo.Height / baseInfo.Height);
                     }
 
-                    var width = Math.Max(
+                    // A channel texture of a source is at most PackAtlasMaxSize
+                    // (at mip m: PackAtlasMaxSize >> m), so its page is too; a
+                    // tiny base colour next to a large channel texture would
+                    // otherwise inflate the ratio without bound.
+                    var channelLimit = ShiftCrossRigidSharedAtlasSize(
+                        PackAtlasMaxSize,
+                        input.MipShift);
+                    var width = Math.Clamp(
+                        (int)Math.Ceiling(pageWidth * ratioWidth),
                         4,
-                        (int)Math.Ceiling(pageWidth * ratioWidth));
-                    var height = Math.Max(
+                        Math.Max(4, channelLimit));
+                    var height = Math.Clamp(
+                        (int)Math.Ceiling(pageHeight * ratioHeight),
                         4,
-                        (int)Math.Ceiling(pageHeight * ratioHeight));
+                        Math.Max(4, channelLimit));
                     var keepAlpha = members.Any(item =>
                         item.Info.KeepAlphaSlots.Contains(
                             channel.Slot,
@@ -343,8 +389,13 @@ namespace Editors.PackOptimizer.Core
                 primary.Fits ? primary.Height : full.Height,
                 primary.Fits ? Bytes(primary.Width, primary.Height) : 0,
                 full.Fits ? Bytes(full.Width, full.Height) : 0,
-                channelCount);
+                channelCount,
+                subBlockCrops);
         }
+
+        // Size of a texture dimension at a lower source mip (ceil, at least 1).
+        internal static int ShiftCrossRigidSharedAtlasSize(int size, int mipShift)
+            => Math.Max(1, (size + (1 << mipShift) - 1) >> mipShift);
 
         // ---- Pure cost model ----
 
@@ -445,7 +496,8 @@ namespace Editors.PackOptimizer.Core
             foreach (var texture in selectedMaterials
                          .SelectMany(material => materialInfo[material].Textures)
                          .Select(texture => texture.Path)
-                         .Distinct(StringComparer.OrdinalIgnoreCase))
+                         .Distinct(StringComparer.OrdinalIgnoreCase)
+                         .Where(_ => !input.GeneratedOnly))
             {
                 var block = input.GetTextureBlockReason(texture);
                 if (block == SharedAtlasBlockVanilla)
@@ -629,7 +681,7 @@ namespace Editors.PackOptimizer.Core
 
             // Repack savings lost on the rigids the atlas would change.
             long? lostRepack = null;
-            if (input.RepackTextures != null)
+            if (input.RepackTextures != null && !input.GeneratedOnly)
             {
                 var changed = new HashSet<string>(
                     StringComparer.OrdinalIgnoreCase);
@@ -640,6 +692,16 @@ namespace Editors.PackOptimizer.Core
                                    item.Rigids.Any(changed.Contains))
                     .Sum(item => item.BytesSaved);
             }
+
+            var selectedPages = selected
+                .Select(index => (costs[index].PageWidth,
+                    costs[index].PageHeight))
+                .OrderBy(page => (long)page.PageWidth * page.PageHeight)
+                .ToArray();
+            var medianPage = selectedPages.Length == 0
+                ? (Width: 0, Height: 0)
+                : (Width: selectedPages[selectedPages.Length / 2].PageWidth,
+                    Height: selectedPages[selectedPages.Length / 2].PageHeight);
 
             return new SharedAtlasCostResult(
                 materialInfo.Count,
@@ -667,7 +729,10 @@ namespace Editors.PackOptimizer.Core
                 lostRepack,
                 geometry,
                 curve,
-                reachable);
+                reachable,
+                selected.Sum(index => costs[index].SubBlockCrops),
+                medianPage.Width,
+                medianPage.Height);
         }
 
         // ---- State adapter ----
@@ -686,6 +751,10 @@ namespace Editors.PackOptimizer.Core
             public bool EmbeddedReferencesKnown { get; set; }
             public List<SharedAtlasRepackTexture>? RepackTextures { get; set; }
             public Dictionary<string, SharedAtlasMaterial> Materials { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // Phase 0b: material-level checks only (no mesh-level blockers,
+            // plus the UV0 tiling reason when coverage is known).
+            public Dictionary<string, SharedAtlasMaterial> FarMaterials { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
         }
 
@@ -839,7 +908,8 @@ namespace Editors.PackOptimizer.Core
         private static SharedAtlasMaterial BuildCrossRigidSharedAtlasMaterial(
             BatchState state,
             CrossRigidSharedAtlasIndex index,
-            string materialPath)
+            string materialPath,
+            bool applyMeshBlocks = true)
         {
             var normalized = Normalize(materialPath);
             XmlDocument? document = null;
@@ -913,10 +983,12 @@ namespace Editors.PackOptimizer.Core
                 resolved.Add(channel.Slot);
             }
 
-            if (!index.RigidsByMaterial.ContainsKey(normalized))
-                return Ineligible(SharedAtlasReasonNoUser);
-            if (index.MeshBlockByMaterial.TryGetValue(normalized, out var block))
-                return Ineligible(block);
+            var meshReason = ResolveCrossRigidSharedAtlasMeshLevelReason(
+                applyMeshBlocks,
+                index.RigidsByMaterial.ContainsKey(normalized),
+                index.MeshBlockByMaterial.GetValueOrDefault(normalized));
+            if (meshReason != null)
+                return Ineligible(meshReason);
 
             string[] keepAlpha;
             try
@@ -942,29 +1014,80 @@ namespace Editors.PackOptimizer.Core
                 keepAlpha);
         }
 
+        // Mesh-level rules (no source user, shared mesh part, gameplay
+        // consumer, rigid used outside the pack) only matter when the atlas
+        // rewrites the source rigids; a generated payload never does.
+        internal static string? ResolveCrossRigidSharedAtlasMeshLevelReason(
+            bool applyMeshBlocks,
+            bool hasSourceUser,
+            string? meshBlock)
+        {
+            if (!applyMeshBlocks)
+                return null;
+            return hasSourceUser ? meshBlock : SharedAtlasReasonNoUser;
+        }
+
         private static SharedAtlasCostInput BuildCrossRigidSharedAtlasCostInput(
             BatchState state,
-            IReadOnlyList<CrossRigidIdealMergePayload> acceptedPayloads)
+            IReadOnlyList<CrossRigidIdealMergePayload> acceptedPayloads,
+            bool farMode = false,
+            int mipShift = 0)
         {
             var index = GetCrossRigidSharedAtlasIndex(state);
             var coverage = state.VanillaTextureCoverage;
             return new SharedAtlasCostInput(
                 acceptedPayloads
-                    .Select(payload => new SharedAtlasPayload(
-                        payload.Key,
-                        payload.Saving,
-                        payload.GeometryBytes,
-                        payload.QualifyingMaterialGroups))
+                    .Select(payload => farMode
+                        ? new SharedAtlasPayload(
+                            payload.Key,
+                            GetCrossRigidFarAtlasSaving(
+                                payload.ScenarioLodIndices,
+                                payload.SavingByScenarioLod,
+                                payload.T0SavingByScenarioLod),
+                            payload.FarGeometryBytes,
+                            GetCrossRigidFarGroups(
+                                payload.ScenarioLodIndices,
+                                payload.QualifyingMaterialGroupsByScenarioLod))
+                        : new SharedAtlasPayload(
+                            payload.Key,
+                            payload.Saving,
+                            payload.GeometryBytes,
+                            payload.QualifyingMaterialGroups))
                     .ToArray(),
                 material =>
                 {
-                    if (!index.Materials.TryGetValue(material, out var info))
+                    var cache = farMode ? index.FarMaterials : index.Materials;
+                    if (!cache.TryGetValue(material, out var info))
                     {
                         info = BuildCrossRigidSharedAtlasMaterial(
                             state,
                             index,
-                            material);
-                        index.Materials[material] = info;
+                            material,
+                            !farMode);
+                        if (farMode && info.IneligibleReason == null)
+                        {
+                            var basePath = info.Textures
+                                .FirstOrDefault(texture => texture.Slot.Equals(
+                                    "t_xml_base_colour",
+                                    StringComparison.OrdinalIgnoreCase))
+                                ?.Path;
+                            if (basePath != null &&
+                                coverage != null &&
+                                coverage.Entries.TryGetValue(
+                                    basePath,
+                                    out var entry) &&
+                                entry.Finalized &&
+                                entry.Tiled)
+                            {
+                                info = new SharedAtlasMaterial(
+                                    material,
+                                    SharedAtlasReasonTiledUv,
+                                    [],
+                                    []);
+                            }
+                        }
+
+                        cache[material] = info;
                     }
 
                     return info;
@@ -1004,7 +1127,9 @@ namespace Editors.PackOptimizer.Core
                     out var rigids)
                     ? rigids
                     : Array.Empty<string>(),
-                index.RepackTextures);
+                index.RepackTextures,
+                mipShift,
+                farMode);
         }
 
         // ---- Report lines ----
@@ -1058,34 +1183,49 @@ namespace Editors.PackOptimizer.Core
                 $"{FormatMiB(result.NetBytes)}, lost repack " +
                 $"{(result.LostRepackBytes.HasValue ? FormatMiB(result.LostRepackBytes.Value) : "n/a")}, " +
                 $"geometry {FormatMiB(result.GeometryBytes)}");
-            if (result.Curve.Count != 0)
-            {
-                var points = new List<SharedAtlasCurvePoint>();
-                foreach (var rank in CrossRigidSharedAtlasCurveRanks)
-                {
-                    if (rank < result.Curve.Count)
-                        points.Add(result.Curve[rank - 1]);
-                }
-
-                points.Add(result.Curve[^1]);
-                lines.Add(
-                    "        shared-atlas curve (components by net per saved draw; " +
-                    "cumulative rank: draws / net / geometry): " +
-                    string.Join("; ", points.Select(point =>
-                        $"#{point.Rank} {point.Draws:0.###} / " +
-                        $"{FormatMiB(point.NetBytes)} / " +
-                        $"{FormatMiB(point.GeometryBytes)}")));
-            }
-
-            lines.Add(
-                "        shared-atlas draws reachable at net texture per draw " +
-                "(avg = best cumulative prefix, marg = components whose own " +
-                "marginal price fits): " +
-                string.Join("; ", result.Reachable.Select(item =>
-                    $"<= {item.LimitMiB:0} MiB avg {item.AverageDraws:0.###} " +
-                    $"(#{item.AverageRank}), marg {item.MarginalDraws:0.###} " +
-                    $"({item.MarginalComponents:N0} comp)")));
+            var curveLine = BuildCrossRigidSharedAtlasCurveLine(
+                result,
+                "shared-atlas");
+            if (curveLine != null)
+                lines.Add(curveLine);
+            lines.Add(BuildCrossRigidSharedAtlasReachableLine(
+                result,
+                "shared-atlas"));
             return lines;
         }
+
+        private static string? BuildCrossRigidSharedAtlasCurveLine(
+            SharedAtlasCostResult result,
+            string label)
+        {
+            if (result.Curve.Count == 0)
+                return null;
+            var points = new List<SharedAtlasCurvePoint>();
+            foreach (var rank in CrossRigidSharedAtlasCurveRanks)
+            {
+                if (rank < result.Curve.Count)
+                    points.Add(result.Curve[rank - 1]);
+            }
+
+            points.Add(result.Curve[^1]);
+            return
+                $"        {label} curve (components by net per saved draw; " +
+                "cumulative rank: draws / net / geometry): " +
+                string.Join("; ", points.Select(point =>
+                    $"#{point.Rank} {point.Draws:0.###} / " +
+                    $"{FormatMiB(point.NetBytes)} / " +
+                    $"{FormatMiB(point.GeometryBytes)}"));
+        }
+
+        private static string BuildCrossRigidSharedAtlasReachableLine(
+            SharedAtlasCostResult result,
+            string label)
+            => $"        {label} draws reachable at net texture per draw " +
+               "(avg = best cumulative prefix, marg = components whose own " +
+               "marginal price fits): " +
+               string.Join("; ", result.Reachable.Select(item =>
+                   $"<= {item.LimitMiB:0} MiB avg {item.AverageDraws:0.###} " +
+                   $"(#{item.AverageRank}), marg {item.MarginalDraws:0.###} " +
+                   $"({item.MarginalComponents:N0} comp)"));
     }
 }

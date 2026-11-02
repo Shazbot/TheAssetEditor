@@ -1204,3 +1204,94 @@ Draws reachable at a net texture price (avg / marg):
 **Reading: no-go for TEB.** The bar was at least 50 TEB draws at no more than 4 MiB net texture per draw. TEB reaches at most 22.4 draws that way (marginal, caps 128 to 512; 4.5 average at cap 64), and even the whole eligible set is only 42.9 draws at 486 MiB net (11.3 MiB per draw), because about four fifths of the atlas-dependent saving is lost to ineligible members (shared mesh parts, no source user) and almost nothing is retired. Albion alone would pass (117 to 162 draws at 4 MiB, 8 to 19 % of its saving) but TEB is the gate. Stop here per the plan; the Phase 1 pre-pass is not worth building from this evidence unless TEB's "mesh part shared by several materials" blocker is removed first (it is the largest loss: it would need per-material UV0 copies of the shared mesh).
 
 Verification: 979 focused Release tests pass (967 existing plus 12 new in `PackTextureAtlasSharedAtlasNetCostTests`: closure retirement, net-bytes math, fit classification from the dry run, ineligible loss attribution, curve attribution, BC3 keep-alpha, repack loss). Bench defaults (no flags) in `K:\projects\assedfork-bench\xr-shared-atlas-phase0-20261102`: sorted `fingerprint.txt` lines above `== report` are identical to `teb-p0` (6,747 files) and `albion-default48` (4,817 files), and the TEB `bench_output.pack` is byte-identical to `teb-p0`. Process time TEB 143.8 s (reference 170.1 s, contended), Albion 83.3 s (reference 100.6 s); the model's own cost is therefore under the noise of those references (it was not timed separately). No WHMM host was built or shipped.
+
+## 2026-11-02: Far-LOD reduced-mip atlas cost (report only)
+
+Phase 0b of the shared-atlas idea: price an atlas that lives only inside the generated cross-rigid payloads, is used only at scenario LODs 2 and 3, and is built from a lower source mip. Report only, inside the `ReportDiagnostics` gate (a failure prints "unavailable"); OutputVersion stays 48. Code: `PackTextureAtlasBatchService.CrossRigid.IdealMergeFarLod.cs` (new), `...IdealMergeNetCost.cs` (mip shift, generated-only mode, material-level eligibility, shared line helpers) and the payload accounting in `...IdealMerge.cs`. Units as before: draws are expected army draws (TEB baseline about 1.980, Albion about 1.570).
+
+Definitions (approximations in brackets):
+- **LOD split.** Every payload now also keeps its army-weighted T1 and strict-T0 saving per scenario LOD (the same linear weighting as `Saving`; the per-LOD parts sum to it). "Atlas-dependent" per LOD = T1 minus T0 of that LOD. This is finer than Phase 0, which called the whole saving of a payload with qualifying groups atlas-dependent.
+- **Far saving** of a payload = sum over scenario LODs >= 2 of (T1 - T0). T0 savings at any LOD are obtainable without an atlas and are not counted. A payload with far saving but no far qualifying group is dropped.
+- **Far bytes** = geometry of the source-rigid LOD rows that scenario LODs 2 and 3 read (rows min(LOD, last row)) summed over the payload's WSModels, same vertex/index formula as the full-rigid figure. [Stand-in for the generated far geometry; it assumes the far rows can be emitted separately from the near rows. The full-rigid bytes of the same payloads are printed next to it, 3,7x larger on TEB, 3,1x on Albion. If a payload must always carry every LOD row, the cap applies to the larger figure.]
+- **Far selection** = the existing `SelectCrossRigidIdealMergePayloadKeysGreedy` on (far saving, far bytes) with the same caps and per-payload ceiling, over all payloads (not only the T1-accepted set), so it picks more far draws than the T1 set contains.
+- **Eligibility** = the material-level subset of Phase 0 (material readable, no emissive, no conflicting duplicate slot, base colour present, resolvable and sizable BCn DDS, secondary slots resolvable, keep-alpha BC1/BC3). Mesh-level blockers are not applied. UV0 tiling: a material is ineligible ("base colour UV0 tiles") when the vanilla-coverage entry of its base texture is finalized and `Tiled`. [That flag is per texture over every part and LOD that uses it, so it is a superset of the far parts; the check is skipped (and said so in the line) when coverage is unavailable.] A payload with an ineligible member material in its far groups loses its far saving.
+- **Cost.** Phase 0 dry run (`TextureAtlasBuilder.CreatePlan`, padding 8, 4096 page) with source and crop sizes divided by 2^m (ceil); channel pages are the base page scaled by the largest channel/base ratio, now clamped to 4096 >> m (a 4 px constant base next to a 4096 px normal map had inflated one TEB component to 3,5 TiB; the clamp only changed Phase 0's full-rect figure, the crop-based Phase 0 lines are identical). Bytes = full BCn mip chain of the reduced page per channel. Nothing is retired and no repack is lost, so net = atlas bytes. Crops below 4 px are counted: TEB 1 at m=1 and m=2 (none on Albion).
+- Curve and reachability are the Phase 0 algorithms on far draws.
+
+LOD split of the accepted T1 saving (draws, scenario LODs 0 / 1 / 2 / 3; atlas-dependent = above T0):
+
+| Pack, cap | T1 total | L0 / L1 / L2 / L3 | Atlas-dependent | L0 / L1 / L2 / L3 | Far atlas-dependent |
+|---|---|---|---|---|---|
+| TEB 64 | 110,317 | 28,744 / 27,063 / 27,255 / 27,255 | 88,663 | 23,362 / 22,189 / 21,556 / 21,556 | 43,111 |
+| TEB 128 | 156,001 | 39,753 / 37,791 / 39,228 / 39,228 | 129,443 | 33,181 / 31,728 / 32,267 / 32,267 | 64,535 |
+| TEB 256 | 208,799 | 52,003 / 49,555 / 53,62 / 53,62 | 173,081 | 43,773 / 41,835 / 43,736 / 43,736 | 87,473 |
+| TEB 512 = unl. | 221,402 | 55,87 / 53,173 / 56,18 / 56,18 | 184,2 | 47,278 / 45,091 / 45,916 / 45,916 | 91,832 |
+| Albion 64 | 104,884 | 32,686 / 32,686 / 19,755 / 19,755 | 101,683 | 31,086 / 31,086 / 19,755 / 19,755 | 39,511 |
+| Albion 128 | 168,53 | 50,554 / 50,554 / 33,711 / 33,711 | 165,33 | 48,954 / 48,954 / 33,711 / 33,711 | 67,422 |
+| Albion 256 | 244,338 | 72,4 / 72,4 / 49,769 / 49,769 | 241,138 | 70,799 / 70,799 / 49,769 / 49,769 | 99,539 |
+| Albion 512 = unl. | 326,689 | 94,996 / 94,996 / 68,349 / 68,349 | 323,489 | 93,396 / 93,396 / 68,349 / 68,349 | 136,697 |
+
+About 40 to 45 % of the atlas-dependent saving sits at LODs 2 and 3 on both packs. On Albion essentially all of the far saving is atlas-dependent (T0 saves nothing at far LODs); on TEB T0 already takes about a quarter of it.
+
+Far selection and eligibility (the 256 MiB cap is today's; 512 MiB and unlimited accept the same far set as 256 on both packs):
+
+| Pack, cap | Candidates | Accepted | Far draws accepted | Far geometry MiB (full-rigid MiB) | Materials eligible | Far draws lost to ineligible (by reason) |
+|---|---|---|---|---|---|---|
+| TEB 64 | 5.402 | 379 | 88,342 | 64,0 (237,1) | 108 of 109 | 0,42 (1 secondary unresolved) |
+| TEB 128 | 5.402 | 584 | 102,627 | 102,0 (372,8) | 127 of 129 | 0,476 (2 secondary unresolved) |
+| TEB 256+ | 5.402 | 584 | 102,627 | 102,0 (372,8) | same as 128 | same as 128 |
+| Albion 64 | 1.142 | 230 | 87 | 64,0 (197,2) | 60 of 67 | 19,287 (4 materials UV0 tiles 16,042; 3 secondary unresolved 3,245) |
+| Albion 128 | 1.142 | 429 | 125,877 | 128,0 (402,8) | 71 of 78 | 29,859 (tiles 25,6; secondary 4,259) |
+| Albion 256+ | 1.142 | 590 | 145,682 | 186,9 (577,8) | 85 of 92 | 35,482 (tiles 25,747; secondary 9,736) |
+
+The mesh-level blockers that removed about four fifths of TEB's Phase 0 atlas-dependent saving (shared mesh part, no source user) are gone, so TEB loses almost nothing to eligibility; the only material-level losses are unresolved secondary textures (both packs) and UV0 tiling (Albion only, 4 materials).
+
+Cost per pack, cap and source mip (eligible far draws are the credited ones: eligible and all their components fit one page; MiB per draw = atlas MiB / eligible far draws; pages are the base-colour layout of the dry run, largest and median component):
+
+| Pack, cap | m | Eligible far draws | Atlas MiB | MiB per draw | Components fit one page | Largest page | Median page |
+|---|---|---|---|---|---|---|---|
+| TEB 64 | 0 | 50,65 | 485,3 | 9,58 | 19 of 20 | 4096x4096 | 2048x2048 |
+| TEB 64 | 1 | 87,922 | 141,8 | 1,61 | 20 of 20 | 2048x4096 | 1024x1024 |
+| TEB 64 | 2 | 87,922 | 36,3 | 0,41 | 20 of 20 | 1024x2048 | 512x512 |
+| TEB 128 and up | 0 | 58,411 | 536,0 | 9,18 | 20 of 21 | 4096x4096 | 2048x4096 |
+| TEB 128 and up | 1 | 102,151 | 154,5 | 1,51 | 21 of 21 | 2048x4096 | 1024x2048 |
+| TEB 128 and up | 2 | 102,151 | 39,5 | 0,39 | 21 of 21 | 1024x2048 | 512x1024 |
+| Albion 64 | 0 | 50,064 | 289,3 | 5,78 | 10 of 11 | 4096x4096 | 2048x2048 |
+| Albion 64 | 1 | 67,712 | 91,7 | 1,35 | 11 of 11 | 2048x4096 | 1024x2048 |
+| Albion 64 | 2 | 67,712 | 25,9 | 0,38 | 11 of 11 | 1024x2048 | 1024x512 |
+| Albion 128 | 0 | 76,747 | 321,3 | 4,19 | 12 of 13 | 4096x4096 | 2048x2048 |
+| Albion 128 | 1 | 96,018 | 100,7 | 1,05 | 13 of 13 | 2048x4096 | 1024x2048 |
+| Albion 128 | 2 | 96,018 | 29,2 | 0,30 | 13 of 13 | 1024x2048 | 1024x512 |
+| Albion 256 and up | 0 | 89,955 | 369,3 | 4,11 | 15 of 16 | 4096x4096 | 2048x2048 |
+| Albion 256 and up | 1 | 110,2 | 112,7 | 1,02 | 16 of 16 | 2048x4096 | 1024x1024 |
+| Albion 256 and up | 2 | 110,2 | 32,2 | 0,29 | 16 of 16 | 1024x2048 | 1024x512 |
+
+At m=0 the one component that does not fit a page takes about 38 TEB draws with it; at m>=1 every component fits. m=2 costs about a quarter of m=1 (the page is 1/16 of the bytes but BCn mip chains and the padding floor keep it above 1/16 of m=0 per component).
+
+Draws reachable at a net texture price per draw (avg / marg):
+
+| Pack, cap, m | <= 1 MiB | <= 2 MiB | <= 4 MiB | <= 8 MiB |
+|---|---|---|---|---|
+| TEB 64, m=0 | 0 / 0 | 0 / 0 | 11,235 / 5,319 | 46,021 / 29,165 |
+| TEB 64, m=1 | 61,14 / 36,539 | 87,922 / 63,145 | 87,922 / 84,767 | 87,922 / 86,009 |
+| TEB 64, m=2 | 87,922 / 84,767 | 87,922 / 86,009 | 87,922 / 87,922 | 87,922 / 87,922 |
+| TEB 128+, m=0 | 0 / 0 | 0 / 0 | 16,623 / 13,267 | 55,817 / 33,994 |
+| TEB 128+, m=1 | 78,658 / 50,753 | 102,151 / 74,24 | 102,151 / 98,041 | 102,151 / 99,557 |
+| TEB 128+, m=2 | 102,151 / 98,041 | 102,151 / 99,557 | 102,151 / 102,151 | 102,151 / 102,151 |
+| Albion 64, m=1 | 60,001 / 52,373 | 67,712 / 54,945 | 67,712 / 65,141 | 67,712 / 66,426 |
+| Albion 128, m=1 | 94,733 / 72,267 | 96,018 / 88,337 | 96,018 / 94,733 | 96,018 / 96,018 |
+| Albion 256+, m=0 | 0 / 23,147 | 50,677 / 29,367 | 89,76 / 65,173 | 89,955 / 81,932 |
+| Albion 256+, m=1 | 110,004 / 85,418 | 110,2 / 102,177 | 110,2 / 108,719 | 110,2 / 110,004 |
+| Albion 256+, m=2 | 110,2 / 108,719 | 110,2 / 110,004 | 110,2 / 110,004 | 110,2 / 110,2 |
+
+**Reading: go for TEB on this metric.** The bar was at least 50 TEB far draws reachable at <= 4 MiB per draw at m=1 or m=2. TEB reaches 87,9 (cap 64) to 102,2 (cap 128 and up) draws at m=1 (average) and 84,8 to 98,0 (marginal); at m=2 all of it fits within 1 MiB per draw on average. That is 4,5 to 5,2 % of the TEB baseline and over 99 % of the far draws the greedy selected, for 36 to 40 MiB (m=2) or 142 to 155 MiB (m=1) of extra atlas texture. Albion passes too (110,2 draws, 7 % of its baseline at cap 256, at 1,02 MiB per draw at m=1).
+
+Caveats before building anything:
+- The far geometry (64 to 102 MiB on TEB) is counted from LOD rows; the cap holds only if far rows of a payload can be generated without the near rows of the same payload. With full-rigid bytes (237 to 373 MiB) the same cap admits roughly a quarter of those payloads.
+- m=1 and m=2 sample a quarter or a sixteenth of the texels (median base page 1024x1024 / 512x512); the quality of far soldiers at those mips was not measured here.
+- Constant-channel detection, Faction3 mask canonicalisation, UV0 island preparation and other-mod consumers are still not modelled (as in Phase 0), and UV0 tiling is a per-texture superset. The far saving is also taken over the whole accepted payload set, ignoring the writer/state-cap limits the greedy already ignores.
+- Draws are expected army draws, 100 draws is about 5 % of TEB.
+
+Verification: 989 focused Release tests pass (979 before plus 10 new in `PackTextureAtlasFarLodAtlasCostTests`: LOD split sums, far saving excludes LOD 0/1 and T0, far groups, far LOD rows, mip reduction of sizes and bytes, 4 px block floor, generated-only retirement, mesh-level blockers off, greedy on far bytes, channel clamp). Bench defaults (no flags) in `K:\projects\assedfork-bench\xr-far-lod-atlas-phase0b-20261102`: sorted `fingerprint.txt` lines above `== report` are identical to `teb-phase0` (6.747 files) and `albion-phase0` (4.817 files). Process time TEB 139,1 s (Phase 0: 143,8 s), Albion 84,6 s (83,3 s): within noise. No WHMM host was built or shipped.
+
+Reading with whole-model geometry (added on review): a VMD slot picks one mesh for all LODs, so a generated payload must also carry its near LODs (unmerged source parts). Charged that way, TEB's 88.3 far draws at the 64 MiB cap cost 237.1 MiB of geometry plus 36.3 MiB (m=2) or 141.8 MiB (m=1) of atlas: about +270 / +380 MiB, 3.1 / 4.3 MiB per far draw, versus about 1.4 MB per draw for today's default merging (46.4 draws, +63 MB). Texture cost alone passes; the combined cost is 2-3x today's per draw for about 4.5 % of instances (about 0.4-1 % FPS). Decision 2026-11-02: not built yet; cheaper no-atlas rewrite tiers (weighted2/4, alpha, duplicate texture paths) are measured first.

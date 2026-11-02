@@ -812,7 +812,11 @@ namespace Editors.PackOptimizer.Core
             string key,
             long geometryBytes,
             int[] savedDrawsByScenarioLod,
-            string[][] qualifyingMaterialGroups)
+            string[][] qualifyingMaterialGroups,
+            int[] scenarioLodIndices,
+            int[] savedT0DrawsByScenarioLod,
+            string[][][] qualifyingMaterialGroupsByScenarioLod,
+            long farGeometryBytes)
         {
             public string Key { get; } = key;
             // Distinct material-path groups (sorted) of T1 identity groups
@@ -825,6 +829,21 @@ namespace Editors.PackOptimizer.Core
             public bool IsPayload { get; } =
                 savedDrawsByScenarioLod.Any(saved => saved > 0);
             public double Saving { get; set; }
+
+            // Phase 0b (report only): the same saving split by scenario LOD
+            // (T1 and strict T0, army-weighted like Saving), the qualifying
+            // groups per scenario LOD and the geometry of the LOD rows that
+            // scenario LODs >= CrossRigidFarLodMinIndex read.
+            public int[] ScenarioLodIndices { get; } = scenarioLodIndices;
+            public int[] SavedT0DrawsByScenarioLod { get; } =
+                savedT0DrawsByScenarioLod;
+            public string[][][] QualifyingMaterialGroupsByScenarioLod { get; } =
+                qualifyingMaterialGroupsByScenarioLod;
+            public long FarGeometryBytes { get; } = farGeometryBytes;
+            public double[] SavingByScenarioLod { get; } =
+                new double[scenarioLodIndices.Length];
+            public double[] T0SavingByScenarioLod { get; } =
+                new double[scenarioLodIndices.Length];
         }
 
         private sealed record CrossRigidIdealMergeContext(
@@ -844,6 +863,8 @@ namespace Editors.PackOptimizer.Core
             { get; } = new(StringComparer.Ordinal);
             public List<CrossRigidIdealMergeContext> Contexts { get; } = [];
             public Dictionary<string, long> WsModelGeometryBytes { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, long> WsModelFarGeometryBytes { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<(string WsModelPath, int LodIndex), int>
                 InstanceDraws { get; } = [];
@@ -871,6 +892,7 @@ namespace Editors.PackOptimizer.Core
                 Payloads.Clear();
                 Contexts.Clear();
                 WsModelGeometryBytes.Clear();
+                WsModelFarGeometryBytes.Clear();
                 MaterialTextures.Clear();
                 TextureInfos.Clear();
                 InstanceDraws.Clear();
@@ -913,10 +935,25 @@ namespace Editors.PackOptimizer.Core
             if (cache.TryGetValue(component.WsModelPath, out var cached))
                 return cached;
 
+            var geometryBytes = SumCrossRigidIdealMergeLodRowBytes(
+                component,
+                Enumerable.Range(0, component.Rigid.ModelList.Length));
+            cache[component.WsModelPath] = geometryBytes;
+            return geometryBytes;
+        }
+
+        // Same formula over a chosen set of LOD rows of the rigid.
+        private static long SumCrossRigidIdealMergeLodRowBytes(
+            CrossRigidAnalysisComponent component,
+            IEnumerable<int> lodRows)
+        {
             long geometryBytes = 0;
             var vertexFactory = VertexFactory.Create();
-            foreach (var model in component.Rigid.ModelList.SelectMany(
-                         lod => lod))
+            foreach (var model in lodRows
+                         .Where(row => row >= 0 &&
+                                       row < component.Rigid.ModelList.Length)
+                         .Distinct()
+                         .SelectMany(row => component.Rigid.ModelList[row]))
             {
                 if (!vertexFactory.IsKnownVertex(
                         model.Material.BinaryVertexFormat))
@@ -934,8 +971,30 @@ namespace Editors.PackOptimizer.Core
                     (model.Mesh.IndexList?.Length ?? 0));
             }
 
-            cache[component.WsModelPath] = geometryBytes;
             return geometryBytes;
+        }
+
+        // Phase 0b: geometry of the LOD rows a far scenario LOD (index >=
+        // CrossRigidFarLodMinIndex) reads from this WSModel's rigid, i.e. the
+        // rows min(scenario LOD, last row). Per-LOD rows of the source rigid
+        // stand in for the generated payload's far geometry.
+        private static long GetCrossRigidIdealMergeWsModelFarGeometryBytes(
+            BatchState state,
+            CrossRigidAnalysisComponent component,
+            IReadOnlyList<int> scenarioLodIndices)
+        {
+            var cache = state.CrossRigidIdealMergeAccounting
+                .WsModelFarGeometryBytes;
+            if (cache.TryGetValue(component.WsModelPath, out var cached))
+                return cached;
+
+            var bytes = SumCrossRigidIdealMergeLodRowBytes(
+                component,
+                GetCrossRigidFarLodSourceRows(
+                    scenarioLodIndices,
+                    component.Rigid.ModelList.Length));
+            cache[component.WsModelPath] = bytes;
+            return bytes;
         }
 
         private static int GetCrossRigidIdealMergeInstanceDraws(
@@ -1084,6 +1143,18 @@ namespace Editors.PackOptimizer.Core
                             payload.SavedDrawsByScenarioLod[index];
                     }
 
+                    for (var index = 0; index < unitWeights.Length; index++)
+                    {
+                        payload.SavingByScenarioLod[index] +=
+                            configuration.Probability *
+                            unitWeights[index] *
+                            payload.SavedDrawsByScenarioLod[index];
+                        payload.T0SavingByScenarioLod[index] +=
+                            configuration.Probability *
+                            unitWeights[index] *
+                            payload.SavedT0DrawsByScenarioLod[index];
+                    }
+
                     var saving = configuration.Probability * weightedSaved;
                     payload.Saving += saving;
                     contextSaving += saving;
@@ -1115,6 +1186,8 @@ namespace Editors.PackOptimizer.Core
                 IReadOnlyList<int> scenarioLodIndices)
         {
             var saved = new int[scenarioLodIndices.Count];
+            var savedT0 = new int[scenarioLodIndices.Count];
+            var groupsByLod = new string[scenarioLodIndices.Count][][];
             var qualifyingGroups = new Dictionary<string, string[]>(
                 StringComparer.Ordinal);
             for (var index = 0; index < saved.Length; index++)
@@ -1136,12 +1209,16 @@ namespace Editors.PackOptimizer.Core
                             sourceLodIndex);
                 }
 
-                saved[index] = perInstanceDraws -
-                               GetCrossRigidIdealMergeConfigurationDraws(
-                                   state,
-                                   instances)[1];
-                foreach (var group in GetCrossRigidIdealMergeQualifyingGroups(
-                             BuildCrossRigidIdealMergeParts(state, instances)))
+                var tierDraws = GetCrossRigidIdealMergeConfigurationDraws(
+                    state,
+                    instances);
+                saved[index] = perInstanceDraws - tierDraws[1];
+                savedT0[index] = perInstanceDraws - tierDraws[0];
+                var lodGroups = GetCrossRigidIdealMergeQualifyingGroups(
+                        BuildCrossRigidIdealMergeParts(state, instances))
+                    .ToArray();
+                groupsByLod[index] = lodGroups;
+                foreach (var group in lodGroups)
                 {
                     qualifyingGroups[string.Join("\u001e", group)] = group;
                 }
@@ -1157,7 +1234,15 @@ namespace Editors.PackOptimizer.Core
                 qualifyingGroups.OrderBy(entry => entry.Key,
                         StringComparer.Ordinal)
                     .Select(entry => entry.Value)
-                    .ToArray());
+                    .ToArray(),
+                scenarioLodIndices.ToArray(),
+                savedT0,
+                groupsByLod,
+                components.Sum(component =>
+                    GetCrossRigidIdealMergeWsModelFarGeometryBytes(
+                        state,
+                        component,
+                        scenarioLodIndices)));
         }
 
         // T1 identity groups holding >= 2 strict (T0) identities: the
@@ -1308,6 +1393,7 @@ namespace Editors.PackOptimizer.Core
                     (payload.Key, payload.Saving, payload.GeometryBytes))
                 .ToArray();
             string[]? previousAtlasKeys = null;
+            string[]? previousFarKeys = null;
             foreach (long? capMiB in CrossRigidIdealMergeGrowthCapsMiB
                          .Select(cap => (long?)cap)
                          .Append(null))
@@ -1338,6 +1424,26 @@ namespace Editors.PackOptimizer.Core
                         (int)capMiB.Value))
                 {
                     continue;
+                }
+
+                try
+                {
+                    lines.AddRange(
+                        BuildCrossRigidFarLodAtlasLines(
+                            state,
+                            payloads,
+                            acceptedPayloads,
+                            capMiB,
+                            previousFarKeys,
+                            baselineTotal,
+                            out var farKeys));
+                    previousFarKeys = farKeys;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    lines.Add(
+                        "        far-LOD reduced-mip atlas cost: unavailable (" +
+                        ex.GetType().Name + ": " + ex.Message + ")");
                 }
 
                 var atlasKeys = acceptedPayloads
