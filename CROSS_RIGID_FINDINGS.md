@@ -5,11 +5,11 @@ Branch `feature/texture-atlas-consolidation`. Test pack: `!ak_teb3.pack` (dump i
 ## Summary
 
 - The engine cost that merging reduces is **mesh parts per soldier**. Draw-call count and the number of distinct meshes did not affect frame rate, GPU-bound or CPU-bound (2026-11-02 A/B: 10 vs 50 draws, same FPS).
-- The best case (10 parts per soldier collapsed to 1, screen full of one unit type) gave about **8 % FPS GPU-bound** and **about 20 % CPU-bound** (39 -> 47 FPS). Since OutputVersion 48 the default cross-rigid merging removes 46.4 of 1,124 expected soldier-part instances on this pack (4.1 %), worth roughly **0.4-0.9 % FPS** at those two ratios, for +63 MB of pack size.
+- The best case (10 parts per soldier collapsed to 1, screen full of one unit type) gave about **8 % FPS GPU-bound** and **about 20 % CPU-bound** (39 -> 47 FPS). Since OutputVersion 48 the default cross-rigid merging removes 46.4 of 1,980.7 expected soldier-part instances on this pack (2.3 %; the current report's baseline, which differs from the older 1,124 figure below), worth roughly **0.2-0.5 % FPS** at those two ratios, for +63 MB of pack size.
 - The cross-rigid writer used to emit joint slots with more than five alternatives; the engine uses only five per slot, so output lost visual variety in-game. **Fixed** by nesting through generated group VMDs (see Open issues, item 1).
 - Texture size is not expected to affect frame rate here (a working conclusion, not measured), so all texture work is judged on **video memory and pack size only**.
 - Of the texture measures, only the shared-texture repack paid off on `ak_teb3`: 32.7 MB saved on four sets. Downscaling is down to 7 candidates (12.6 MB) once lords and heroes are excluded, and the other texture ideas were estimated and not built.
-- Recommendation: keep cross-rigid on with the draw-call price at 0 (draw calls are free; do not cap them). Do not build the shared-atlas planner or a per-configuration writer: at the CPU-bound ratio its 64 MiB tier would be worth roughly 1-1.5 % FPS for about 175 MiB of extra textures, still poor value. Stop extending the cross-rigid search; the slot limit is fixed.
+- Recommendation: keep cross-rigid on with the draw-call price at 0 (draw calls are free; do not cap them). Do not build the shared-atlas planner or a per-configuration writer: its v48 ceilings are 5.6 / 10.5 % of instances at a 64 / 256 MiB geometry cap (about 0.5-1.2 / 0.9-2.3 % FPS at the two ratios), needing 185 / 258 MiB of source textures atlased; still poor value unless the texture cost can be cut. Stop extending the cross-rigid search; the slot limit is fixed.
 
 ## How Warhammer 3 draws unit soldiers
 
